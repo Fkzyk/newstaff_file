@@ -65,7 +65,7 @@ def build_annai(src: Path):
     missed = [ANNAI_RULES[i][0] for i in range(len(ANNAI_RULES)) if i not in applied]
     if missed:
         raise SystemExit(f"入社案内: 置換できなかったルールがあります: {missed}")
-    out = TEMPLATES / "入社のご案内.docx"
+    out = TEMPLATES / "annai.docx"
     doc.save(out)
     print("wrote", out)
 
@@ -83,7 +83,7 @@ def build_keiyakusho(src: Path):
     # (変換ソフトによって数式が再計算されない事故を防ぐため)
     for addr in ("I17", "T17", "AE17", "I18", "I19", "B33"):
         ws[addr] = ""
-    out = TEMPLATES / "雇用契約書.xlsx"
+    out = TEMPLATES / "keiyakusho.xlsx"
     wb.save(out)
     print("wrote", out)
 
@@ -94,8 +94,8 @@ def main():
     build_annai(up / "58121f1d-20260713____________.docx")
     build_keiyakusho(up / "00a86777-___________.xlsx")
     # 社宅案内は個人情報を含まないためそのままコピー
-    shutil.copy(up / "1f2810b9-__________.docx", TEMPLATES / "社宅利用申込のご案内.docx")
-    shutil.copy(up / "34d0db03-__________2602.pdf", TEMPLATES / "社宅システム入力マニュアル.pdf")
+    shutil.copy(up / "1f2810b9-__________.docx", TEMPLATES / "shataku_annai.docx")
+    shutil.copy(up / "34d0db03-__________2602.pdf", TEMPLATES / "shataku_manual.pdf")
     print("done")
 
 

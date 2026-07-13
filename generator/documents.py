@@ -22,10 +22,11 @@ from .data import Person
 REPO = Path(__file__).resolve().parent.parent
 TEMPLATES = REPO / "templates"
 
-ANNAI_TEMPLATE = TEMPLATES / "入社のご案内.docx"
-KEIYAKU_TEMPLATE = TEMPLATES / "雇用契約書.xlsx"
-SHATAKU_ANNAI = TEMPLATES / "社宅利用申込のご案内.docx"
-SHATAKU_MANUAL = TEMPLATES / "社宅システム入力マニュアル.pdf"
+# テンプレートのファイル名は、ZIP配布時の文字化けを避けるため英数字にしている
+ANNAI_TEMPLATE = TEMPLATES / "annai.docx"
+KEIYAKU_TEMPLATE = TEMPLATES / "keiyakusho.xlsx"
+SHATAKU_ANNAI = TEMPLATES / "shataku_annai.docx"
+SHATAKU_MANUAL = TEMPLATES / "shataku_manual.pdf"
 
 
 # ---------------------------------------------------------------- 入社のご案内
