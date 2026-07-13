@@ -72,21 +72,38 @@ def _to_date(value, default_year: int) -> Optional[dt.date]:
     return None
 
 
-def _is_grayed(cell) -> bool:
-    """セルの背景がグレー系(=対応済みの印)かどうか。"""
-    fill = cell.fill
-    if fill is None or fill.patternType is None:
-        return False
-    if fill.patternType in ("lightGray", "gray125", "gray0625", "mediumGray", "darkGray"):
-        return True
-    if fill.patternType != "solid":
-        return False
-    rgb = getattr(fill.fgColor, "rgb", None)
+def _is_gray_rgb(rgb) -> bool:
+    """AARRGGBB文字列がグレー系(白すぎず黒すぎない無彩色)かどうか。"""
     if not isinstance(rgb, str) or len(rgb) != 8:
         return False
-    r, g, b = (int(rgb[i:i + 2], 16) for i in (2, 4, 6))
-    # 彩度が低く(=無彩色に近い)、白でも黒でもない → グレー
+    try:
+        r, g, b = (int(rgb[i:i + 2], 16) for i in (2, 4, 6))
+    except ValueError:
+        return False
     return max(r, g, b) - min(r, g, b) <= 24 and 100 <= max(r, g, b) <= 235
+
+
+def _is_grayed(cell) -> bool:
+    """セルがグレーアウト(=対応済みの印)されているかどうか。
+
+    背景色のグレー、文字色のグレー、取り消し線のいずれかで判定する。
+    """
+    fill = cell.fill
+    if fill is not None and fill.patternType is not None:
+        if fill.patternType in ("lightGray", "gray125", "gray0625",
+                                "mediumGray", "darkGray"):
+            return True
+        if fill.patternType == "solid" and _is_gray_rgb(
+                getattr(fill.fgColor, "rgb", None)):
+            return True
+    font = cell.font
+    if font is not None:
+        if font.strike:
+            return True
+        color = getattr(font, "color", None)
+        if color is not None and _is_gray_rgb(getattr(color, "rgb", None)):
+            return True
+    return False
 
 
 def _s(value) -> str:

@@ -60,6 +60,14 @@ def fetch_google_sheet(url: str) -> bytes:
     return r.content
 
 
+def _set_sheet(data: bytes):
+    """シートを読み込む。内容が変わったときは選択状態をリセットする。"""
+    if st.session_state.get("sheet_bytes") != data:
+        st.session_state["sheet_bytes"] = data
+        st.session_state.pop("bulk_select", None)
+        st.session_state.pop("people_editor", None)
+
+
 # ---------------------------------------------------------------- 画面
 st.title("📄 入社書類作成アプリ")
 st.caption("スプレッドシートの新入社員一覧から、入社案内・雇用契約書・入社辞令(転居者には社宅案内も)と"
@@ -96,7 +104,7 @@ with tab_url:
         placeholder="https://docs.google.com/spreadsheets/d/...")
     if st.button("読み込む", type="primary", key="load_url") and sheet_url:
         try:
-            st.session_state["sheet_bytes"] = fetch_google_sheet(sheet_url)
+            _set_sheet(fetch_google_sheet(sheet_url))
             st.session_state["sheet_url"] = sheet_url
             st.success("読み込みました")
         except Exception as e:
@@ -105,7 +113,7 @@ with tab_file:
     up = st.file_uploader("スプレッドシートをxlsx形式でダウンロードしたファイル",
                           type=["xlsx"])
     if up is not None:
-        st.session_state["sheet_bytes"] = up.getvalue()
+        _set_sheet(up.getvalue())
 
 if "sheet_bytes" not in st.session_state:
     st.info("スプレッドシートを読み込むと、続きの手順が表示されます。")
@@ -122,14 +130,26 @@ if not people:
 
 # --- 2. 対象者の選択 --------------------------------------------------------
 st.header("2️⃣ 対象者の確認・選択")
-st.caption("「作成」のチェックを外すとその方はスキップします。シートでグレーアウトされている方"
-           "(対応済み)は自動でチェックが外れます。「社宅案内」はシートの「転居」列から"
-           "自動判定していますが、ここで変更できます。")
+st.caption("チェックが付いている方の分だけ作成します。**入社日が過ぎている方**と、"
+           "シートで**グレーアウトされている方**(対応済み)は自動でチェックが外れます。"
+           "「社宅案内」はシートの「転居」列から自動判定していますが、ここで変更できます。")
 
+bc1, bc2, _ = st.columns([1, 1, 4])
+if bc1.button("✅ 全員選択"):
+    st.session_state["bulk_select"] = True
+    st.session_state.pop("people_editor", None)
+if bc2.button("⬜ 全員解除"):
+    st.session_state["bulk_select"] = False
+    st.session_state.pop("people_editor", None)
+bulk = st.session_state.get("bulk_select")
+
+today = dt.date.today()
 rows = []
 for p in people:
+    default_make = (not p.warnings and not p.done
+                    and p.nyusha_date is not None and p.nyusha_date >= today)
     rows.append({
-        "作成": not p.warnings and not p.done,
+        "作成": bulk if bulk is not None else default_make,
         "氏名": p.name,
         "入社日": defaults.fmt_full(p.nyusha_date) if p.nyusha_date else "?",
         "所属": p.shozoku_name,
@@ -137,11 +157,12 @@ for p in people:
         "等級": p.grade,
         "メールアドレス": p.email,
         "社宅案内": p.shataku,
-        "状態": "✅対応済み" if p.done else "",
+        "状態": ("✅対応済み" if p.done else
+                 "入社日経過" if p.nyusha_date and p.nyusha_date < today else ""),
         "注意": " / ".join(p.warnings),
     })
 edited = st.data_editor(
-    rows, hide_index=True, width="stretch",
+    rows, hide_index=True, width="stretch", key="people_editor",
     disabled=["氏名", "入社日", "所属", "役職", "等級", "メールアドレス", "状態", "注意"],
     column_config={
         "作成": st.column_config.CheckboxColumn(help="書類とメールを作成する"),
