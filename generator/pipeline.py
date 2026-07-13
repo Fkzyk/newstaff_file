@@ -25,14 +25,20 @@ def person_dir(base: Path, person: Person) -> Path:
     return base / cohort / person.name.replace(" ", "").replace("　", "")
 
 
-def _mail_context(person: Person, company: dict, attachments: list[Path]) -> dict:
+def _mail_context(person: Person, company: dict, attachments: list[Path],
+                  shataku_text: str | None = None) -> dict:
     listing = "\n".join(f"・{p.stem}" for p in attachments)
+    if shataku_text is None:
+        shataku_text = defaults.MAIL_SHATAKU_PARAGRAPH_DEFAULT
+    # 対象者には空行で挟んだ段落として入る。対象外は行ごと消える。
+    paragraph = f"\n{shataku_text.strip()}\n" if person.shataku and shataku_text.strip() else ""
     return {
         "氏名": person.name,
         "入社日": defaults.fmt_md(person.nyusha_date),
         "入社日full": defaults.fmt_full_youbi(person.nyusha_date),
         "添付一覧": listing,
-        "社宅文": defaults.MAIL_SHATAKU_SENTENCE if person.shataku else "",
+        "社宅段落": paragraph,
+        "社宅文": paragraph,  # 旧テンプレート互換
         **company,
     }
 
@@ -48,10 +54,11 @@ def _collect_attachments(folder: Path) -> list[Path]:
 
 
 def rebuild_mail(folder: Path, person: Person, company: dict,
-                 subject_tpl: str, body_tpl: str) -> Path:
+                 subject_tpl: str, body_tpl: str,
+                 shataku_text: str | None = None) -> Path:
     """フォルダ内のPDFを添付してメール下書きを(再)作成する。"""
     attachments = _collect_attachments(folder)
-    ctx = _mail_context(person, company, attachments)
+    ctx = _mail_context(person, company, attachments, shataku_text)
     subject = subject_tpl.format(**ctx)
     body = body_tpl.format(**ctx)
     (folder / "メール本文.txt").write_text(
@@ -63,6 +70,7 @@ def rebuild_mail(folder: Path, person: Person, company: dict,
 def generate_person(person: Person, base_dir: Path, cohort: dict, company: dict,
                     subject_tpl: str, body_tpl: str,
                     hakko_date: dt.date | None = None,
+                    shataku_text: str | None = None,
                     progress=None) -> Path:
     """一人分の書類一式を生成する。戻り値は出力フォルダ。"""
     def report(msg):
@@ -91,12 +99,13 @@ def generate_person(person: Person, base_dir: Path, cohort: dict, company: dict,
         documents.convert_to_pdf(f)
 
     report("メール下書きを作成中…")
-    rebuild_mail(folder, person, company, subject_tpl, body_tpl)
+    rebuild_mail(folder, person, company, subject_tpl, body_tpl, shataku_text)
     return folder
 
 
 def refresh_person(person: Person, base_dir: Path, company: dict,
-                   subject_tpl: str, body_tpl: str, progress=None) -> Path:
+                   subject_tpl: str, body_tpl: str,
+                   shataku_text: str | None = None, progress=None) -> Path:
     """フォルダ内のWord/Excelを修正した後に呼ぶ。
 
     Word/Excel を PDF に変換し直し、メール下書きも作り直す。
@@ -114,5 +123,5 @@ def refresh_person(person: Person, base_dir: Path, company: dict,
     # マニュアルPDFは変換対象外なのでそのまま残る
     if progress:
         progress("メール下書きを作り直し中…")
-    rebuild_mail(folder, person, company, subject_tpl, body_tpl)
+    rebuild_mail(folder, person, company, subject_tpl, body_tpl, shataku_text)
     return folder

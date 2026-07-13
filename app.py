@@ -208,13 +208,16 @@ for d in sorted({p.nyusha_date for p in selected}):
 # --- 4. メール文面 ----------------------------------------------------------
 st.header("4️⃣ メール文面")
 with st.expander("✉️ 件名・本文のテンプレートを確認・編集する", expanded=False):
-    st.caption("{氏名} {入社日} {入社日full} {添付一覧} {社宅文} {会社名} {部署名} "
-               "{担当者名} {問い合わせ} が差し込まれます。{社宅文}は社宅案内を"
-               "添付する方にだけ「社宅システムのご案内も含んでおります。」と入ります。")
+    st.caption("{氏名} {入社日} {入社日full} {添付一覧} {社宅段落} {会社名} {部署名} "
+               "{担当者名} {問い合わせ} が差し込まれます。")
     subject_tpl = st.text_input(
-        "件名", saved.get("mail_subject_v2", defaults.MAIL_SUBJECT_DEFAULT))
+        "件名", saved.get("mail_subject_v3", defaults.MAIL_SUBJECT_DEFAULT))
     body_tpl = st.text_area(
-        "本文", saved.get("mail_body_v2", defaults.MAIL_BODY_DEFAULT), height=380)
+        "本文", saved.get("mail_body_v3", defaults.MAIL_BODY_DEFAULT), height=380)
+    shataku_text = st.text_area(
+        "社宅対象の方にだけ入る段落({社宅段落}の位置に差し込まれます。対象外の方では行ごと消えます)",
+        saved.get("mail_shataku_v3", defaults.MAIL_SHATAKU_PARAGRAPH_DEFAULT),
+        height=120)
 
 # --- 5. 作成 ----------------------------------------------------------------
 st.header("5️⃣ 作成")
@@ -229,8 +232,9 @@ if run:
     save_settings(out_dir, {
         "company": company,
         "cohorts": cohorts,
-        "mail_subject_v2": subject_tpl,
-        "mail_body_v2": body_tpl,
+        "mail_subject_v3": subject_tpl,
+        "mail_body_v3": body_tpl,
+        "mail_shataku_v3": shataku_text,
         "sheet_url": st.session_state.get("sheet_url", ""),
     })
     results, errors = [], []
@@ -241,7 +245,8 @@ if run:
             status.info(f"{p.name} さんの書類を作成中…")
             folder = generate_person(
                 p, out_dir, cohorts[p.nyusha_date.isoformat()], company,
-                subject_tpl, body_tpl, hakko_date=hakko_date)
+                subject_tpl, body_tpl, hakko_date=hakko_date,
+                shataku_text=shataku_text)
             results.append((p, folder))
         except Exception as e:
             errors.append((p, str(e)))
@@ -271,7 +276,8 @@ if fixable:
         p = fixable[idx]
         try:
             with st.spinner("変換中…"):
-                folder = refresh_person(p, out_dir, company, subject_tpl, body_tpl)
+                folder = refresh_person(p, out_dir, company, subject_tpl, body_tpl,
+                                        shataku_text=shataku_text)
             st.success(f"✅ 作り直しました → `{folder}`")
         except Exception as e:
             st.error(f"❌ {e}")
