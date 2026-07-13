@@ -288,7 +288,8 @@ def convert_to_pdf(path: Path) -> Path:
     soffice = _find_soffice()
     if not soffice:
         raise RuntimeError(
-            "PDF変換ソフトが見つかりません。Microsoft Office または "
+            "PDF変換ができませんでした。PCにMicrosoft Office(Word/Excel)が"
+            "入っている場合はアプリを再起動してみてください。無い場合は "
             "LibreOffice (https://ja.libreoffice.org) をインストールしてください。")
     with tempfile.TemporaryDirectory() as tmp:
         res = subprocess.run(

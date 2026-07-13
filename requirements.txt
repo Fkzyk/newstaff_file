@@ -4,6 +4,8 @@ python-docx>=1.1
 openpyxl>=3.1
 requests>=2.31
 pypdf>=4.0
+# WindowsでMicrosoft Office(Word/Excel)を使ってPDF変換するために必要
+pywin32; sys_platform == "win32"
 # pyarrow 22以降 + Streamlit の組み合わせで画面更新時にクラッシュする問題があるため固定
 # (Python 3.14以上はpyarrow<22のWindows用wheelが無いため、やむを得ず新しい版を使う)
 pyarrow<22; python_version < "3.14"
