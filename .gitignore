@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.streamlit/
+出力/
+*.eml
+~$*

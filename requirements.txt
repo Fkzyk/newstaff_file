@@ -1,0 +1,9 @@
+streamlit>=1.35
+docxtpl>=0.16
+python-docx>=1.1
+openpyxl>=3.1
+requests>=2.31
+pypdf>=4.0
+# pyarrow 22以降 + Streamlit の組み合わせで画面更新時にクラッシュする問題があるため固定
+pyarrow<22
+pandas<3
