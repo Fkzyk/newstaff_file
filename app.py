@@ -208,12 +208,13 @@ for d in sorted({p.nyusha_date for p in selected}):
 # --- 4. メール文面 ----------------------------------------------------------
 st.header("4️⃣ メール文面")
 with st.expander("✉️ 件名・本文のテンプレートを確認・編集する", expanded=False):
-    st.caption("{氏名} {入社日} {入社日full} {添付一覧} {社宅段落} {会社名} {部署名} "
-               "{担当者名} {問い合わせ} が差し込まれます。")
+    st.caption("{氏名} {入社日} {入社日full} {添付一覧} {社宅文} {会社名} {部署名} "
+               "{担当者名} {問い合わせ} が差し込まれます。{社宅文}は社宅案内を"
+               "添付する方にだけ「社宅システムのご案内も含んでおります。」と入ります。")
     subject_tpl = st.text_input(
-        "件名", saved.get("mail_subject", defaults.MAIL_SUBJECT_DEFAULT))
+        "件名", saved.get("mail_subject_v2", defaults.MAIL_SUBJECT_DEFAULT))
     body_tpl = st.text_area(
-        "本文", saved.get("mail_body", defaults.MAIL_BODY_DEFAULT), height=380)
+        "本文", saved.get("mail_body_v2", defaults.MAIL_BODY_DEFAULT), height=380)
 
 # --- 5. 作成 ----------------------------------------------------------------
 st.header("5️⃣ 作成")
@@ -228,8 +229,8 @@ if run:
     save_settings(out_dir, {
         "company": company,
         "cohorts": cohorts,
-        "mail_subject": subject_tpl,
-        "mail_body": body_tpl,
+        "mail_subject_v2": subject_tpl,
+        "mail_body_v2": body_tpl,
         "sheet_url": st.session_state.get("sheet_url", ""),
     })
     results, errors = [], []

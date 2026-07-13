@@ -32,7 +32,7 @@ def _mail_context(person: Person, company: dict, attachments: list[Path]) -> dic
         "入社日": defaults.fmt_md(person.nyusha_date),
         "入社日full": defaults.fmt_full_youbi(person.nyusha_date),
         "添付一覧": listing,
-        "社宅段落": defaults.MAIL_SHATAKU_PARAGRAPH if person.shataku else "",
+        "社宅文": defaults.MAIL_SHATAKU_SENTENCE if person.shataku else "",
         **company,
     }
 
