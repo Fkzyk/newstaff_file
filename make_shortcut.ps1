@@ -6,4 +6,5 @@ $lnk.TargetPath = (Join-Path $PSScriptRoot 'start.bat')
 $lnk.WorkingDirectory = $PSScriptRoot
 $lnk.IconLocation = 'imageres.dll,187'
 $lnk.Description = '入社書類作成アプリを起動'
+$lnk.WindowStyle = 7  # 最小化で起動(黒い画面を誤って閉じないように)
 $lnk.Save()
