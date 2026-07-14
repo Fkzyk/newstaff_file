@@ -29,7 +29,8 @@ def person_dir(base: Path, person: Person) -> Path:
 
 def _mail_context(person: Person, company: dict, attachments: list[Path],
                   shataku_text: str | None = None) -> dict:
-    listing = "\n".join(f"・{p.stem}" for p in attachments)
+    # 添付ミス防止のため、実際に添付するファイル名をそのまま列挙する
+    listing = "\n".join(f"・{p.name}" for p in attachments)
     if shataku_text is None:
         shataku_text = defaults.MAIL_SHATAKU_PARAGRAPH_DEFAULT
     # 対象者には空行で挟んだ段落として入る。対象外は行ごと消える。

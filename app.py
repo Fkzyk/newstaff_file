@@ -240,9 +240,9 @@ for d in sorted({p.nyusha_date for p in selected}):
 with st.expander("✉️ メールの件名・本文を変えたいときだけ開く"):
     st.caption("{氏名} {入社日} {入社日full} {添付一覧} {社宅段落} などが自動で差し込まれます。")
     subject_tpl = st.text_input(
-        "件名", saved.get("mail_subject_v3", defaults.MAIL_SUBJECT_DEFAULT))
+        "件名", saved.get("mail_subject_v4", defaults.MAIL_SUBJECT_DEFAULT))
     body_tpl = st.text_area(
-        "本文", saved.get("mail_body_v3", defaults.MAIL_BODY_DEFAULT), height=380)
+        "本文", saved.get("mail_body_v4", defaults.MAIL_BODY_DEFAULT), height=380)
     shataku_text = st.text_area(
         "社宅対象の方にだけ入る段落(対象外の方では行ごと消えます)",
         saved.get("mail_shataku_v4", defaults.MAIL_SHATAKU_PARAGRAPH_DEFAULT),
@@ -259,8 +259,8 @@ if run:
         "out_dir": str(out_dir),
         "company": company,
         "cohorts": cohorts,
-        "mail_subject_v3": subject_tpl,
-        "mail_body_v3": body_tpl,
+        "mail_subject_v4": subject_tpl,
+        "mail_body_v4": body_tpl,
         "mail_shataku_v4": shataku_text,
         "sheet_url": sheet_url,
     })
