@@ -216,7 +216,7 @@ with st.expander("✉️ 件名・本文のテンプレートを確認・編集�
         "本文", saved.get("mail_body_v3", defaults.MAIL_BODY_DEFAULT), height=380)
     shataku_text = st.text_area(
         "社宅対象の方にだけ入る段落({社宅段落}の位置に差し込まれます。対象外の方では行ごと消えます)",
-        saved.get("mail_shataku_v3", defaults.MAIL_SHATAKU_PARAGRAPH_DEFAULT),
+        saved.get("mail_shataku_v4", defaults.MAIL_SHATAKU_PARAGRAPH_DEFAULT),
         height=120)
 
 # --- 5. 作成 ----------------------------------------------------------------
@@ -234,7 +234,7 @@ if run:
         "cohorts": cohorts,
         "mail_subject_v3": subject_tpl,
         "mail_body_v3": body_tpl,
-        "mail_shataku_v3": shataku_text,
+        "mail_shataku_v4": shataku_text,
         "sheet_url": st.session_state.get("sheet_url", ""),
     })
     results, errors = [], []
@@ -243,20 +243,22 @@ if run:
     for i, p in enumerate(selected):
         try:
             status.info(f"{p.name} さんの書類を作成中…")
-            folder = generate_person(
+            folder, notes = generate_person(
                 p, out_dir, cohorts[p.nyusha_date.isoformat()], company,
                 subject_tpl, body_tpl, hakko_date=hakko_date,
                 shataku_text=shataku_text)
-            results.append((p, folder))
+            results.append((p, folder, notes))
         except Exception as e:
             errors.append((p, str(e)))
         bar.progress((i + 1) / len(selected))
     status.empty()
     if results:
         st.success(f"✅ {len(results)}名分を作成しました")
-        for p, folder in results:
+        for p, folder, notes in results:
             marker = "(社宅案内あり)" if p.shataku else ""
             st.write(f"- **{p.name}** {marker} → `{folder}`")
+            for n in notes:
+                st.warning(f"{p.name}: {n}")
     for p, msg in errors:
         st.error(f"❌ {p.name}: {msg}")
     st.info("💡 メール送信: 各フォルダの「メール下書き.eml」をダブルクリックすると、"

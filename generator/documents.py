@@ -10,10 +10,6 @@ import tempfile
 from pathlib import Path
 
 import openpyxl
-from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml.ns import qn
-from docx.shared import Mm, Pt
 from docxtpl import DocxTemplate
 
 from . import defaults
@@ -65,6 +61,15 @@ def render_annai(person: Person, cohort: dict, hakko_date: dt.date, out: Path) -
 
 
 # ---------------------------------------------------------------- 雇用契約書
+def _to_yen(value) -> int:
+    """「279,546円」のような文字列表記も数値に正規化する。空欄は0円。"""
+    if value is None or value == "":
+        return 0
+    if isinstance(value, str):
+        value = value.replace(",", "").replace("円", "").strip()
+    return int(float(value))
+
+
 def _load_salary_table() -> tuple[dict, dict]:
     """給与テーブルシートから 等級->給与 と 備考文言 を読み込む。"""
     wb = openpyxl.load_workbook(KEIYAKU_TEMPLATE, data_only=False)
@@ -74,9 +79,9 @@ def _load_salary_table() -> tuple[dict, dict]:
         grade = row[1].value  # B列
         if grade:
             salary[str(grade).strip()] = {
-                "月給": row[2].value,   # C列
-                "基本給": row[3].value,  # D列
-                "固定手当": row[4].value,  # E列
+                "月給": _to_yen(row[2].value),   # C列
+                "基本給": _to_yen(row[3].value),  # D列
+                "固定手当": _to_yen(row[4].value),  # E列
             }
     notes = {addr: ws[addr].value for addr in ("L3", "L4", "L5", "L7", "L8", "L9")}
     return salary, notes
@@ -124,94 +129,8 @@ def render_keiyakusho(person: Person, out: Path) -> Path:
 
 
 # ---------------------------------------------------------------- 入社辞令
-def _add_ruby_run(paragraph, base: str, ruby: str, font: str, size_pt: int):
-    """ふりがな(ルビ)付きのランを段落に追加する。"""
-    r = paragraph.add_run()
-    rt_sz = max(int(size_pt / 2) * 2, 10)  # ルビは本文の約半分
-    ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-    import xml.sax.saxutils as su
-    xml = f"""<w:ruby xmlns:w="{ns}">
-      <w:rubyPr>
-        <w:rubyAlign w:val="center"/>
-        <w:hps w:val="{rt_sz}"/>
-        <w:hpsRaise w:val="{int(size_pt * 2)}"/>
-        <w:hpsBaseText w:val="{size_pt * 2}"/>
-        <w:lid w:val="ja-JP"/>
-      </w:rubyPr>
-      <w:rt>
-        <w:r>
-          <w:rPr>
-            <w:rFonts w:ascii="{font}" w:eastAsia="{font}" w:hAnsi="{font}"/>
-            <w:sz w:val="{rt_sz}"/>
-          </w:rPr>
-          <w:t>{su.escape(ruby)}</w:t>
-        </w:r>
-      </w:rt>
-      <w:rubyBase>
-        <w:r>
-          <w:rPr>
-            <w:rFonts w:ascii="{font}" w:eastAsia="{font}" w:hAnsi="{font}"/>
-            <w:sz w:val="{size_pt * 2}"/>
-          </w:rPr>
-          <w:t>{su.escape(base)}</w:t>
-        </w:r>
-      </w:rubyBase>
-    </w:ruby>"""
-    from docx.oxml import parse_xml
-    r._r.append(parse_xml(xml))
-
-
-def _set_font(run, font: str, size: int, bold=False):
-    run.font.name = font
-    run.font.size = Pt(size)
-    run.font.bold = bold
-    run._element.rPr.rFonts.set(qn("w:eastAsia"), font)
-
-
-def render_jirei(person: Person, company: dict, out: Path) -> Path:
-    """入社辞令.docx を生成する(毛筆体の辞令レイアウト)。"""
-    font = "HG正楷書体-PRO"
-    doc = Document()
-    sec = doc.sections[0]
-    sec.page_width, sec.page_height = Mm(210), Mm(297)
-    sec.top_margin, sec.bottom_margin = Mm(30), Mm(25)
-    sec.left_margin, sec.right_margin = Mm(25), Mm(25)
-
-    def para(align=WD_ALIGN_PARAGRAPH.CENTER, before=0, after=8):
-        p = doc.add_paragraph()
-        p.alignment = align
-        p.paragraph_format.space_before = Pt(before)
-        p.paragraph_format.space_after = Pt(after)
-        return p
-
-    p = para(after=24)
-    _set_font(p.add_run("入　社　辞　令"), font, 28, bold=True)
-
-    p = para(after=20)
-    if person.furigana:
-        _add_ruby_run(p, person.name, person.furigana, font, 16)
-        _set_font(p.add_run("　殿"), font, 16)
-    else:
-        _set_font(p.add_run(f"{person.name}　殿"), font, 16)
-
-    reiwa = defaults.fmt_reiwa(person.nyusha_date)
-    p = para(align=WD_ALIGN_PARAGRAPH.LEFT, after=12)
-    _set_font(p.add_run(
-        f"　貴殿を、{reiwa}付をもって、正社員として採用し、"
-        f"{company['辞令配属先']}に配属します。"), font, 14)
-    p = para(align=WD_ALIGN_PARAGRAPH.LEFT, after=36)
-    _set_font(p.add_run("　今後の活躍と社業の発展に貢献されることを期待します。"), font, 14)
-
-    p = para(after=28)
-    _set_font(p.add_run(reiwa), font, 14)
-
-    p = para(align=WD_ALIGN_PARAGRAPH.RIGHT, after=4)
-    _set_font(p.add_run(f"{company['会社名']}　"), font, 16)
-    p = para(align=WD_ALIGN_PARAGRAPH.RIGHT)
-    _set_font(p.add_run(f"代表取締役社長　{company['社長名']}　"), font, 16)
-
-    doc.save(out)
-    return out
+# 【鉄則】辞令をゼロから作り直すのは絶対NG(装飾・書体・ルビが失われる)。
+# 生成は generator/jirei.py の原本等長バイト置換方式のみを使うこと。
 
 
 # ---------------------------------------------------------------- 社宅関係
@@ -276,15 +195,20 @@ def _find_soffice() -> str | None:
     return None
 
 
-def convert_to_pdf(path: Path) -> Path:
+def convert_to_pdf(path: Path, word_only: bool = False) -> Path | None:
     """WordやExcelをPDFに変換して同じフォルダに保存する。
 
     Microsoft Office(Windows) → LibreOffice の順に試す。
+    word_only=True のときは Microsoft Office でのみ変換する
+    (辞令はLibreOfficeだと飾り枠・テキストボックスが崩れるため)。
+    変換できなかった場合は None を返す。
     """
     path = Path(path)
     out_pdf = path.with_suffix(".pdf")
     if _convert_with_ms_office(path, out_pdf):
         return out_pdf
+    if word_only:
+        return None
     soffice = _find_soffice()
     if not soffice:
         raise RuntimeError(
