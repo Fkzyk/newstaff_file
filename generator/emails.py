@@ -14,9 +14,12 @@ from pathlib import Path
 
 def build_eml(to: str, subject: str, body: str,
               attachments: list[Path], out: Path,
-              bcc: list[str] | None = None) -> Path:
+              bcc: list[str] | None = None,
+              cc: list[str] | None = None) -> Path:
     msg = EmailMessage(policy=policy.SMTP)
     msg["To"] = to
+    if cc:
+        msg["Cc"] = ", ".join(cc)
     if bcc:
         msg["Bcc"] = ", ".join(bcc)
     msg["Subject"] = subject

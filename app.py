@@ -343,10 +343,11 @@ for p in mailable:
         subject, body, attachments = build_mail_content(
             folder, p, company, subject_tpl, body_tpl, shataku_text)
         webbrowser.open(gmail_compose_url(p.email, subject, body,
+                                          cc=defaults.ANNAI_CC,
                                           account=gmail_account))
         open_folder(folder)
-        st.success(f"Gmailとフォルダを開きました。添付するPDF: "
-                   f"{'、'.join(a.name for a in attachments)}")
+        st.success(f"Gmailとフォルダを開きました(CC: {'、'.join(defaults.ANNAI_CC)})。"
+                   f"添付するPDF: {'、'.join(a.name for a in attachments)}")
 
 # ===== 7. ジョブカン案内メール =====
 with st.expander("📮 ジョブカン案内メールの下書きを作る(入社日ごと・BCC自動設定)"):

@@ -61,6 +61,12 @@ COMPANY = {
     "辞令配属先": "営業本部",
 }
 
+# 入社案内メールのCC(人事の担当2名)。To=新入社員本人。
+ANNAI_CC = [
+    "yuki.ono@sukesan.co.jp",
+    "mako.kobayashi@sukesan.co.jp",
+]
+
 MAIL_SUBJECT_DEFAULT = "【{会社名}】入社のご案内({入社日}入社)"
 
 MAIL_BODY_DEFAULT = """{氏名} 様

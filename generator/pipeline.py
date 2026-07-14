@@ -132,18 +132,23 @@ def rebuild_mail(folder: Path, person: Person, company: dict,
     """
     subject, body, attachments = build_mail_content(
         folder, person, company, subject_tpl, body_tpl, shataku_text)
+    cc = defaults.ANNAI_CC
     (folder / "メール本文.txt").write_text(
-        f"宛先: {person.email}\n件名: {subject}\n\n{body}", encoding="utf-8-sig")
+        f"宛先: {person.email}\nCC: {', '.join(cc)}\n件名: {subject}\n\n{body}",
+        encoding="utf-8-sig")
     return build_eml(person.email, subject, body, attachments,
-                     folder / "メール下書き.eml")
+                     folder / "メール下書き.eml", cc=cc)
 
 
 def gmail_compose_url(to: str, subject: str, body: str,
+                      cc: list[str] | None = None,
                       bcc: list[str] | None = None,
                       account: str | None = None) -> str:
     """Gmailの作成画面を開くURL(添付はGmailの仕様で自動では付かない)。"""
     from urllib.parse import urlencode
     params = {"view": "cm", "fs": "1", "to": to, "su": subject, "body": body}
+    if cc:
+        params["cc"] = ",".join(cc)
     if bcc:
         params["bcc"] = ",".join(bcc)
     if account:
