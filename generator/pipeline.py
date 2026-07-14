@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from pathlib import Path
 
 from . import defaults, documents, jirei
@@ -45,18 +46,80 @@ def _mail_context(person: Person, company: dict, attachments: list[Path],
     }
 
 
+ARCHIVE_DIR = "旧版"
+
+
+def _archive_old_files(folder: Path):
+    """既存の書類ファイルを「旧版」サブフォルダへ退避する。
+
+    上書きで手修正が消える事故と、新旧ファイルの混在(古い方を
+    添付してしまう事故)を防ぐ。削除はしないので必要なら戻せる。
+    """
+    if not folder.exists():
+        return
+    dest = folder / ARCHIVE_DIR
+    for f in sorted(folder.iterdir()):
+        if f.is_file() and re.match(r"^\d{8}_", f.name):
+            dest.mkdir(exist_ok=True)
+            target = dest / f.name
+            if target.exists():
+                stamp = dt.datetime.now().strftime("%H%M%S")
+                target = dest / f"{f.stem}_{stamp}{f.suffix}"
+            f.rename(target)
+
+
+def _office_files(folder: Path) -> list[Path]:
+    files = []
+    for pattern in ("*.docx", "*.xlsx", "*.doc"):
+        files += [f for f in folder.glob(pattern) if not f.name.startswith("~$")]
+    return sorted(set(files))
+
+
+def find_stale_pdfs(folder: Path) -> list[str]:
+    """Word/ExcelがPDFより新しい(=修正が反映されていない)ファイル名の一覧。"""
+    stale = []
+    for f in _office_files(folder):
+        pdf = f.with_suffix(".pdf")
+        if not pdf.exists() or pdf.stat().st_mtime + 1 < f.stat().st_mtime:
+            stale.append(f.name)
+    return stale
+
+
+def ensure_pdfs_fresh(folder: Path, progress=None) -> list[str]:
+    """PDFが古い・無いWord/Excelだけを変換し直す(辞令.docはWord限定)。"""
+    refreshed = []
+    for f in _office_files(folder):
+        pdf = f.with_suffix(".pdf")
+        if not pdf.exists() or pdf.stat().st_mtime + 1 < f.stat().st_mtime:
+            if progress:
+                progress(f"{f.name} をPDFに変換中…")
+            if documents.convert_to_pdf(f, word_only=(f.suffix == ".doc")):
+                refreshed.append(f.name)
+    return refreshed
+
+
 def _collect_attachments(folder: Path) -> list[Path]:
-    """フォルダ内のPDFを添付順に集める。"""
+    """フォルダ内のPDFを添付順に集める。
+
+    同じ書類が複数日付分あっても、最新(ファイル名の日付が最大)だけを添付する。
+    """
     found = []
     for pattern in ATTACH_ORDER:
-        found.extend(sorted(folder.glob(pattern)))
+        matches = [p for p in folder.glob(pattern) if p.is_file()]
+        if matches:
+            found.append(max(matches, key=lambda p: p.name))
     return found
 
 
 def rebuild_mail(folder: Path, person: Person, company: dict,
                  subject_tpl: str, body_tpl: str,
                  shataku_text: str | None = None) -> Path:
-    """フォルダ内のPDFを添付してメール下書きを(再)作成する。"""
+    """フォルダ内のPDFを添付してメール下書きを(再)作成する。
+
+    添付直前にPDFの鮮度を確認し、Word/Excelの方が新しければ
+    自動で変換し直す(修正の反映漏れ防止)。
+    """
+    ensure_pdfs_fresh(folder)
     attachments = _collect_attachments(folder)
     ctx = _mail_context(person, company, attachments, shataku_text)
     subject = subject_tpl.format(**ctx)
@@ -81,6 +144,8 @@ def generate_person(person: Person, base_dir: Path, cohort: dict, company: dict,
     hakko_date = hakko_date or dt.date.today()
     folder = person_dir(base_dir, person)
     folder.mkdir(parents=True, exist_ok=True)
+    # 既存の書類は上書きせず「旧版」へ退避(手修正の消失・新旧混在を防ぐ)
+    _archive_old_files(folder)
 
     # ファイル名ルール: 作成日付_ファイル名(氏名).拡張子
     sakusei = dt.date.today()
@@ -189,19 +254,7 @@ def refresh_person(person: Person, base_dir: Path, company: dict,
     folder = person_dir(base_dir, person)
     if not folder.exists():
         raise FileNotFoundError(f"フォルダがありません: {folder}")
-    for f in sorted(folder.glob("*.docx")) + sorted(folder.glob("*.xlsx")):
-        if f.name.startswith("~$"):
-            continue
-        if progress:
-            progress(f"{f.name} をPDFに変換中…")
-        documents.convert_to_pdf(f)
-    for f in sorted(folder.glob("*.doc")):  # 辞令(.doc)はWord限定で変換
-        if f.name.startswith("~$"):
-            continue
-        if progress:
-            progress(f"{f.name} をPDFに変換中…")
-        documents.convert_to_pdf(f, word_only=True)
-    # マニュアルPDFは変換対象外なのでそのまま残る
+    ensure_pdfs_fresh(folder, progress=progress)
     if progress:
         progress("メール下書きを作り直し中…")
     rebuild_mail(folder, person, company, subject_tpl, body_tpl, shataku_text)

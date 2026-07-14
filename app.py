@@ -21,8 +21,9 @@ import streamlit as st
 
 from generator import defaults
 from generator.data import load_people
-from generator.pipeline import (check_grades, generate_jobkan_mails,
-                                generate_person, person_dir, refresh_person)
+from generator.pipeline import (check_grades, find_stale_pdfs,
+                                generate_jobkan_mails, generate_person,
+                                person_dir, refresh_person)
 
 st.set_page_config(page_title="入社書類作成アプリ", page_icon="📄", layout="centered")
 
@@ -247,6 +248,26 @@ with st.expander("✉️ メールの件名・本文を変えたいときだけ�
         "社宅対象の方にだけ入る段落(対象外の方では行ごと消えます)",
         saved.get("mail_shataku_v4", defaults.MAIL_SHATAKU_PARAGRAPH_DEFAULT),
         height=120)
+
+# ===== 修正の反映漏れチェック(毎回自動) =====
+if st.session_state.pop("flash", None):
+    st.success("✅ 修正をすべて反映しました(PDFとメール下書きを作り直しました)")
+stale_people = []
+for p in people:
+    if p.nyusha_date and person_dir(out_dir, p).exists():
+        stale = find_stale_pdfs(person_dir(out_dir, p))
+        if stale:
+            stale_people.append((p, stale))
+if stale_people:
+    st.warning("⚠️ Word/Excelの修正がPDFにまだ反映されていません:\n"
+               + "\n".join(f"- {p.name}: {'、'.join(s)}" for p, s in stale_people))
+    if st.button("♻️ 反映されていない分をまとめて作り直す", type="primary"):
+        for p, _ in stale_people:
+            with st.spinner(f"{p.name} さんの分を作り直し中…"):
+                refresh_person(p, out_dir, company, subject_tpl, body_tpl,
+                               shataku_text=shataku_text)
+        st.session_state["flash"] = True
+        st.rerun()
 
 # ===== 6. 作成ボタン =====
 st.header("書類とメール下書きを作る")
