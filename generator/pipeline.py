@@ -9,12 +9,11 @@ from . import defaults, documents, jirei
 from .data import Person
 from .emails import build_eml
 
-# メールに添付する PDF の表示順(グロブパターン)
-# ファイル名は「YYYYMMDD_書類名(氏名).拡張子」ルール(CLAUDE.md)
+# 入社案内メールに添付するPDF(グロブパターン・この順)
+# 添付は「入社のご案内」+ 社宅対象者のみ社宅2点。
+# 雇用契約書・入社辞令は生成はするがメールには添付しない(確定運用)。
 ATTACH_ORDER = [
     "*入社のご案内*.pdf",
-    "*雇用契約書*.pdf",
-    "*入社辞令*.pdf",
     "*社宅利用申込のご案内*.pdf",
     "*社宅システム入力マニュアル*.pdf",
 ]
