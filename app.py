@@ -21,9 +21,13 @@ import streamlit as st
 
 from generator import defaults
 from generator.data import load_people
-from generator.pipeline import (check_grades, find_stale_pdfs,
-                                generate_jobkan_mails, generate_person,
-                                person_dir, refresh_person)
+import webbrowser
+
+from generator.pipeline import (build_mail_content, check_grades,
+                                find_stale_pdfs, generate_jobkan_mails,
+                                generate_person, gmail_compose_url,
+                                jobkan_mail_contents, person_dir,
+                                refresh_person)
 
 st.set_page_config(page_title="入社書類作成アプリ", page_icon="📄", layout="centered")
 
@@ -110,6 +114,8 @@ with st.expander("⚙️ 詳細設定(普段は変更不要)", expanded=False):
     company["問い合わせ"] = st.text_input("問い合わせ先", company["問い合わせ"])
     company["社長名"] = st.text_input("代表者名(辞令)", company["社長名"])
     company["辞令配属先"] = st.text_input("辞令の配属先", company["辞令配属先"])
+    gmail_account = st.text_input(
+        "Gmailの送信アカウント", saved.get("gmail_account", "kazuyuki.furukawa@sukesan.co.jp"))
 
 # ===== 1. シートの自動読み込み =====
 if "sheet_bytes" not in st.session_state and "sheet_error" not in st.session_state:
@@ -284,6 +290,7 @@ if run:
         "mail_body_v4": body_tpl,
         "mail_shataku_v4": shataku_text,
         "sheet_url": sheet_url,
+        "gmail_account": gmail_account,
     })
     results, errors = [], []
     bar = st.progress(0.0)
@@ -311,11 +318,35 @@ if run:
     for p, msg in errors:
         st.error(f"❌ {p.name}: {msg}")
     if results:
-        st.info("次にやること: 下のボタンでフォルダを開き、各人のフォルダの"
-                "「メール下書き.eml」をダブルクリック → 内容を確認して送信。")
+        st.info("次にやること: 下の「📧 Gmailで開く」を押すと、宛先・件名・本文入りの"
+                "Gmail作成画面と書類フォルダが開きます。本文の■添付書類にある"
+                "PDFをドラッグして添付し、送信してください。")
 
 if st.button("📂 保存先フォルダを開く", width="stretch"):
     open_folder(out_dir)
+
+# ===== メールを送る(Gmail) =====
+st.header("メールを送る")
+st.caption(f"Gmail({gmail_account})の作成画面が、宛先・件名・本文入りで開きます。"
+           "添付だけはGmailの仕様で自動で付かないため、同時に開くフォルダから"
+           "本文の「■添付書類」のPDFをドラッグしてください。")
+mailable = [p for p in people if not p.warnings and p.nyusha_date
+            and person_dir(out_dir, p).exists()]
+if not mailable:
+    st.caption("(まだ書類を作成した方がいません。作成するとここにボタンが並びます)")
+for p in mailable:
+    c1, c2 = st.columns([3, 2])
+    c1.write(f"**{p.name}**({defaults.fmt_md(p.nyusha_date)}入社"
+             f"{'・社宅あり' if p.shataku else ''})")
+    if c2.button("📧 Gmailで開く", key=f"gmail{p.row}"):
+        folder = person_dir(out_dir, p)
+        subject, body, attachments = build_mail_content(
+            folder, p, company, subject_tpl, body_tpl, shataku_text)
+        webbrowser.open(gmail_compose_url(p.email, subject, body,
+                                          account=gmail_account))
+        open_folder(folder)
+        st.success(f"Gmailとフォルダを開きました。添付するPDF: "
+                   f"{'、'.join(a.name for a in attachments)}")
 
 # ===== 7. ジョブカン案内メール =====
 with st.expander("📮 ジョブカン案内メールの下書きを作る(入社日ごと・BCC自動設定)"):
@@ -328,14 +359,26 @@ with st.expander("📮 ジョブカン案内メールの下書きを作る(入�
         st.write("(これから入社する方がいません)")
     for d in dates:
         members = [p.name for p in people if p.nyusha_date == d and p.email]
-        if st.button(f"📮 {defaults.fmt_md(d)}入社({len(members)}名: {'、'.join(members)})"
-                     "のジョブカン案内メールを作る", key=f"jobkan{d}"):
-            try:
+        st.write(f"**{defaults.fmt_md(d)}入社**({len(members)}名: {'、'.join(members)})")
+        c1, c2, c3 = st.columns(3)
+        try:
+            if c1.button("📧 Gmailで1通目(事前案内)", key=f"jbg1{d}"):
+                mails, bcc, _ = jobkan_mail_contents(people, d)
+                webbrowser.open(gmail_compose_url(
+                    ", ".join(defaults.JOBKAN_TO), mails[0][1], mails[0][2],
+                    bcc=bcc, account=gmail_account))
+                st.success(f"Gmailを開きました(BCC {len(bcc)}名入り)")
+            if c2.button("📧 Gmailで2通目(リマインド)", key=f"jbg2{d}"):
+                mails, bcc, _ = jobkan_mail_contents(people, d)
+                webbrowser.open(gmail_compose_url(
+                    ", ".join(defaults.JOBKAN_TO), mails[1][1], mails[1][2],
+                    bcc=bcc, account=gmail_account))
+                st.success(f"Gmailを開きました(BCC {len(bcc)}名入り)")
+            if c3.button("📄 .emlで保存", key=f"jobkan{d}"):
                 folder, outs, names = generate_jobkan_mails(people, out_dir, d)
-                st.success(f"✅ 2通の下書きを作りました → `{folder}`")
-                st.write(f"BCC({len(names)}名): {'、'.join(names)}")
-            except Exception as e:
-                st.error(f"❌ {e}")
+                st.success(f"✅ 2通の下書きを保存しました → `{folder}`")
+        except Exception as e:
+            st.error(f"❌ {e}")
 
 # ===== 8. 修正したいとき =====
 with st.expander("♻️ 作った書類を直したいとき(PDFとメールの作り直し)"):

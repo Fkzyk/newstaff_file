@@ -111,6 +111,17 @@ def _collect_attachments(folder: Path) -> list[Path]:
     return found
 
 
+def build_mail_content(folder: Path, person: Person, company: dict,
+                       subject_tpl: str, body_tpl: str,
+                       shataku_text: str | None = None
+                       ) -> tuple[str, str, list[Path]]:
+    """メールの(件名, 本文, 添付一覧)を組み立てる。PDFの鮮度も確認する。"""
+    ensure_pdfs_fresh(folder)
+    attachments = _collect_attachments(folder)
+    ctx = _mail_context(person, company, attachments, shataku_text)
+    return subject_tpl.format(**ctx), body_tpl.format(**ctx), attachments
+
+
 def rebuild_mail(folder: Path, person: Person, company: dict,
                  subject_tpl: str, body_tpl: str,
                  shataku_text: str | None = None) -> Path:
@@ -119,15 +130,25 @@ def rebuild_mail(folder: Path, person: Person, company: dict,
     添付直前にPDFの鮮度を確認し、Word/Excelの方が新しければ
     自動で変換し直す(修正の反映漏れ防止)。
     """
-    ensure_pdfs_fresh(folder)
-    attachments = _collect_attachments(folder)
-    ctx = _mail_context(person, company, attachments, shataku_text)
-    subject = subject_tpl.format(**ctx)
-    body = body_tpl.format(**ctx)
+    subject, body, attachments = build_mail_content(
+        folder, person, company, subject_tpl, body_tpl, shataku_text)
     (folder / "メール本文.txt").write_text(
         f"宛先: {person.email}\n件名: {subject}\n\n{body}", encoding="utf-8-sig")
     return build_eml(person.email, subject, body, attachments,
                      folder / "メール下書き.eml")
+
+
+def gmail_compose_url(to: str, subject: str, body: str,
+                      bcc: list[str] | None = None,
+                      account: str | None = None) -> str:
+    """Gmailの作成画面を開くURL(添付はGmailの仕様で自動では付かない)。"""
+    from urllib.parse import urlencode
+    params = {"view": "cm", "fs": "1", "to": to, "su": subject, "body": body}
+    if bcc:
+        params["bcc"] = ",".join(bcc)
+    if account:
+        params["authuser"] = account
+    return "https://mail.google.com/mail/?" + urlencode(params)
 
 
 def generate_person(person: Person, base_dir: Path, cohort: dict, company: dict,
@@ -217,30 +238,39 @@ def check_grades(people: list[Person]) -> tuple[bool, list[str]]:
     return all_ok, lines
 
 
-def generate_jobkan_mails(people: list[Person], base_dir: Path,
-                          nyusha_date) -> tuple[Path, list[Path], list[str]]:
-    """同じ入社日の新入社員全員をBCCに入れたジョブカン案内メール2通を作る。"""
+def jobkan_mail_contents(people: list[Person], nyusha_date
+                         ) -> tuple[list[tuple[str, str, str]], list[str], list[str]]:
+    """ジョブカン案内メール2通の(名前, 件名, 本文)とBCC・対象者名を返す。"""
     members = [p for p in people if p.nyusha_date == nyusha_date and p.email]
     if not members:
         raise ValueError("この入社日のメールアドレスが1件もありません")
     bcc = [p.email for p in members]
+    ctx = {"BCC人数": len(bcc), "入社日": defaults.fmt_md(nyusha_date)}
+    mails = [
+        ("1_事前案内", defaults.JOBKAN_MAIL1_SUBJECT,
+         defaults.JOBKAN_MAIL1_BODY.format(**ctx)),
+        ("2_登録日リマインド", defaults.JOBKAN_MAIL2_SUBJECT,
+         defaults.JOBKAN_MAIL2_BODY.format(**ctx)),
+    ]
+    return mails, bcc, [p.name for p in members]
+
+
+def generate_jobkan_mails(people: list[Person], base_dir: Path,
+                          nyusha_date) -> tuple[Path, list[Path], list[str]]:
+    """同じ入社日の新入社員全員をBCCに入れたジョブカン案内メール2通を作る。"""
+    mails, bcc, names = jobkan_mail_contents(people, nyusha_date)
     d = nyusha_date
     folder = base_dir / f"{d:%Y%m}_ジョブカン案内メール({defaults.fmt_md(d)}入社)"
     folder.mkdir(parents=True, exist_ok=True)
-    ctx = {"BCC人数": len(bcc), "入社日": defaults.fmt_md(d)}
     outs = []
-    for i, (subj, body, name) in enumerate([
-        (defaults.JOBKAN_MAIL1_SUBJECT, defaults.JOBKAN_MAIL1_BODY, "1_事前案内"),
-        (defaults.JOBKAN_MAIL2_SUBJECT, defaults.JOBKAN_MAIL2_BODY, "2_登録日リマインド"),
-    ], start=1):
-        body = body.format(**ctx)
+    for name, subj, body in mails:
         eml = build_eml(", ".join(defaults.JOBKAN_TO), subj, body, [],
                         folder / f"ジョブカン{name}.eml", bcc=bcc)
         (folder / f"ジョブカン{name}.txt").write_text(
             f"宛先: {', '.join(defaults.JOBKAN_TO)}\nBCC: {', '.join(bcc)}\n"
             f"件名: {subj}\n\n{body}", encoding="utf-8-sig")
         outs.append(eml)
-    return folder, outs, [p.name for p in members]
+    return folder, outs, names
 
 
 def refresh_person(person: Person, base_dir: Path, company: dict,
