@@ -26,7 +26,7 @@ from generator.pipeline import (check_grades, generate_jobkan_mails,
 
 st.set_page_config(page_title="入社書類作成アプリ", page_icon="📄", layout="centered")
 
-DEFAULT_OUTPUT = Path.home() / "Desktop" / "入社書類"
+DEFAULT_OUTPUT = Path.home() / "Desktop" / "準備済_入社社員必要書類"
 # 大元シート(新入社員一覧)。CLAUDE.md参照。
 DEFAULT_SHEET_URL = ("https://docs.google.com/spreadsheets/d/"
                      "1v4w-kRFmN49vt5dQE5dj2zhoJJOPGvQUPOxm6L7tMdA/edit")

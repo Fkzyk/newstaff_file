@@ -21,9 +21,10 @@ ATTACH_ORDER = [
 
 
 def person_dir(base: Path, person: Person) -> Path:
+    """一人分の保存先: (保存先)/入社年月_氏名(例: 202608_伊藤まゆ佳)"""
     d = person.nyusha_date
-    cohort = f"{d.year}年{d.month}月{d.day}日入社" if d else "入社日不明"
-    return base / cohort / person.name.replace(" ", "").replace("　", "")
+    prefix = f"{d:%Y%m}" if d else "入社日不明"
+    return base / f"{prefix}_{person.name.replace(' ', '').replace('　', '')}"
 
 
 def _mail_context(person: Person, company: dict, attachments: list[Path],
@@ -159,7 +160,7 @@ def generate_jobkan_mails(people: list[Person], base_dir: Path,
         raise ValueError("この入社日のメールアドレスが1件もありません")
     bcc = [p.email for p in members]
     d = nyusha_date
-    folder = base_dir / f"{d.year}年{d.month}月{d.day}日入社" / "ジョブカン案内メール"
+    folder = base_dir / f"{d:%Y%m}_ジョブカン案内メール({defaults.fmt_md(d)}入社)"
     folder.mkdir(parents=True, exist_ok=True)
     ctx = {"BCC人数": len(bcc), "入社日": defaults.fmt_md(d)}
     outs = []
