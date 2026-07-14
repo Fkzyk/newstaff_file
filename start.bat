@@ -35,6 +35,10 @@ exit /b 1
 
 :found
 echo Using Python: %PY%
+
+rem Create/refresh the Desktop shortcut (Japanese name lives in the .ps1)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0make_shortcut.ps1" >nul 2>nul
+
 %PY% -m ensurepip --upgrade >nul 2>nul
 
 echo Checking libraries (first run may take 1-2 minutes)...

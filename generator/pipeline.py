@@ -92,12 +92,15 @@ def generate_person(person: Person, base_dir: Path, cohort: dict, company: dict,
     # 辞令は原本.docの等長置換で生成。PDF化はWord限定
     # (LibreOfficeでは飾り枠・テキストボックスが崩れるため)
     report("入社辞令を作成中…")
-    jirei_doc = jirei.render_jirei_doc(person, folder, hakko_date)
-    report(f"{jirei_doc.name} をPDFに変換中…")
-    if documents.convert_to_pdf(jirei_doc, word_only=True) is None:
-        notes.append(
-            f"辞令のPDF化にはWordが必要です。「{jirei_doc.name}」をWordで開いて"
-            "「PDFとして保存」し、修正反映ボタンでメールを作り直してください。")
+    try:
+        jirei_doc = jirei.render_jirei_doc(person, folder, hakko_date)
+        report(f"{jirei_doc.name} をPDFに変換中…")
+        if documents.convert_to_pdf(jirei_doc, word_only=True) is None:
+            notes.append(
+                f"辞令のPDF化にはWordが必要です。「{jirei_doc.name}」をWordで開いて"
+                "「PDFとして保存」し、修正反映ボタンでメールを作り直してください。")
+    except jirei.JireiError as e:
+        notes.append(f"入社辞令だけ自動作成できませんでした(他の書類は作成済み): {e}")
 
     if person.shataku:
         report("社宅案内をコピー中…")
@@ -108,6 +111,58 @@ def generate_person(person: Person, base_dir: Path, cohort: dict, company: dict,
     report("メール下書きを作成中…")
     rebuild_mail(folder, person, company, subject_tpl, body_tpl, shataku_text)
     return folder, notes
+
+
+def check_grades(people: list[Person]) -> tuple[bool, list[str]]:
+    """等級・月給チェック: 全員の等級を給与テーブルと突合する。
+
+    戻り値: (全員一致か, 一人ずつの結果メッセージ)
+    """
+    salary_table, _ = documents._load_salary_table()
+    all_ok, lines = True, []
+    for p in people:
+        if not p.grade:
+            all_ok = False
+            lines.append(f"❌ {p.name}: 等級が空欄です")
+        elif p.grade in salary_table:
+            s = salary_table[p.grade]
+            ok = s["月給"] == s["基本給"] + s["固定手当"]
+            mark = "✅" if ok else "❌"
+            if not ok:
+                all_ok = False
+            lines.append(
+                f"{mark} {p.name}: {p.grade} → 月給 {s['月給']:,}円"
+                f"(基本給 {s['基本給']:,} + 固定手当 {s['固定手当']:,})")
+        else:
+            all_ok = False
+            lines.append(f"❌ {p.name}: 等級「{p.grade}」が給与テーブルにありません")
+    return all_ok, lines
+
+
+def generate_jobkan_mails(people: list[Person], base_dir: Path,
+                          nyusha_date) -> tuple[Path, list[Path], list[str]]:
+    """同じ入社日の新入社員全員をBCCに入れたジョブカン案内メール2通を作る。"""
+    members = [p for p in people if p.nyusha_date == nyusha_date and p.email]
+    if not members:
+        raise ValueError("この入社日のメールアドレスが1件もありません")
+    bcc = [p.email for p in members]
+    d = nyusha_date
+    folder = base_dir / f"{d.year}年{d.month}月{d.day}日入社" / "ジョブカン案内メール"
+    folder.mkdir(parents=True, exist_ok=True)
+    ctx = {"BCC人数": len(bcc), "入社日": defaults.fmt_md(d)}
+    outs = []
+    for i, (subj, body, name) in enumerate([
+        (defaults.JOBKAN_MAIL1_SUBJECT, defaults.JOBKAN_MAIL1_BODY, "1_事前案内"),
+        (defaults.JOBKAN_MAIL2_SUBJECT, defaults.JOBKAN_MAIL2_BODY, "2_登録日リマインド"),
+    ], start=1):
+        body = body.format(**ctx)
+        eml = build_eml(", ".join(defaults.JOBKAN_TO), subj, body, [],
+                        folder / f"ジョブカン{name}.eml", bcc=bcc)
+        (folder / f"ジョブカン{name}.txt").write_text(
+            f"宛先: {', '.join(defaults.JOBKAN_TO)}\nBCC: {', '.join(bcc)}\n"
+            f"件名: {subj}\n\n{body}", encoding="utf-8-sig")
+        outs.append(eml)
+    return folder, outs, [p.name for p in members]
 
 
 def refresh_person(person: Person, base_dir: Path, company: dict,
