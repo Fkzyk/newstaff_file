@@ -134,10 +134,12 @@ def render_keiyakusho(person: Person, out: Path) -> Path:
 
 
 # ---------------------------------------------------------------- 社宅関係
-def copy_shataku_files(out_dir: Path) -> list[Path]:
+def copy_shataku_files(out_dir: Path,
+                       annai_name: str = "社宅利用申込のご案内.docx",
+                       manual_name: str = "社宅システム入力マニュアル.pdf") -> list[Path]:
     """社宅案内(docx)とマニュアル(PDF)を出力フォルダにコピーする。"""
-    annai = out_dir / "社宅利用申込のご案内.docx"
-    manual = out_dir / "社宅システム入力マニュアル.pdf"
+    annai = out_dir / annai_name
+    manual = out_dir / manual_name
     shutil.copy(SHATAKU_ANNAI, annai)
     shutil.copy(SHATAKU_MANUAL, manual)
     return [annai, manual]

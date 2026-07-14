@@ -10,12 +10,13 @@ from .data import Person
 from .emails import build_eml
 
 # メールに添付する PDF の表示順(グロブパターン)
+# ファイル名は「YYYYMMDD_書類名(氏名).拡張子」ルール(CLAUDE.md)
 ATTACH_ORDER = [
-    "入社のご案内.pdf",
-    "雇用契約書.pdf",
+    "*入社のご案内*.pdf",
+    "*雇用契約書*.pdf",
     "*入社辞令*.pdf",
-    "社宅利用申込のご案内.pdf",
-    "社宅システム入力マニュアル.pdf",
+    "*社宅利用申込のご案内*.pdf",
+    "*社宅システム入力マニュアル*.pdf",
 ]
 
 
@@ -80,10 +81,18 @@ def generate_person(person: Person, base_dir: Path, cohort: dict, company: dict,
     folder = person_dir(base_dir, person)
     folder.mkdir(parents=True, exist_ok=True)
 
+    # ファイル名ルール: 作成日付_ファイル名(氏名).拡張子
+    sakusei = dt.date.today()
+
+    def fname(title: str, ext: str) -> str:
+        name_disp = person.name.replace(" ", "").replace("　", "")
+        return f"{sakusei:%Y%m%d}_{title}({name_disp}).{ext}"
+
     report("入社のご案内を作成中…")
-    annai = documents.render_annai(person, cohort, hakko_date, folder / "入社のご案内.docx")
+    annai = documents.render_annai(person, cohort, hakko_date,
+                                   folder / fname("入社のご案内", "docx"))
     report("雇用契約書を作成中…")
-    keiyaku = documents.render_keiyakusho(person, folder / "雇用契約書.xlsx")
+    keiyaku = documents.render_keiyakusho(person, folder / fname("雇用契約書", "xlsx"))
 
     for f in (annai, keiyaku):
         report(f"{f.name} をPDFに変換中…")
@@ -93,7 +102,7 @@ def generate_person(person: Person, base_dir: Path, cohort: dict, company: dict,
     # (LibreOfficeでは飾り枠・テキストボックスが崩れるため)
     report("入社辞令を作成中…")
     try:
-        jirei_doc = jirei.render_jirei_doc(person, folder, hakko_date)
+        jirei_doc = jirei.render_jirei_doc(person, folder, sakusei)
         report(f"{jirei_doc.name} をPDFに変換中…")
         if documents.convert_to_pdf(jirei_doc, word_only=True) is None:
             notes.append(
@@ -104,7 +113,10 @@ def generate_person(person: Person, base_dir: Path, cohort: dict, company: dict,
 
     if person.shataku:
         report("社宅案内をコピー中…")
-        shataku_annai, _manual = documents.copy_shataku_files(folder)
+        shataku_annai, _manual = documents.copy_shataku_files(
+            folder,
+            annai_name=fname("社宅利用申込のご案内", "docx"),
+            manual_name=fname("社宅システム入力マニュアル", "pdf"))
         report("社宅案内をPDFに変換中…")
         documents.convert_to_pdf(shataku_annai)
 
