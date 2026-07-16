@@ -243,6 +243,64 @@ def check_grades(people: list[Person]) -> tuple[bool, list[str]]:
     return all_ok, lines
 
 
+JOBKAN_MANUAL = documents.TEMPLATES / "jobkan_workflow.pdf"
+
+
+def build_jobkan_reminders(people: list[Person], out_dir: Path) -> tuple[Path, list[str]]:
+    """今後の入社月ごとに、ジョブカン案内メールの送信予定を
+    カレンダー(.ics)に登録できるファイルを作る。当日に通知が出る。
+
+    戻り値: (icsファイルパス, 予定の説明リスト)
+    """
+    today = dt.date.today()
+    events, summary_lines = [], []
+    seen = set()
+    for p in people:
+        if not p.nyusha_date or not p.email:
+            continue
+        key = p.nyusha_date
+        if key in seen:
+            continue
+        seen.add(key)
+        auto = defaults.jobkan_auto_date(p.nyusha_date)
+        ann = defaults.jobkan_announce_date(p.nyusha_date)
+        mstr = defaults.fmt_md(p.nyusha_date)
+        if ann >= today:
+            events.append((ann,
+                f"ジョブカン事前案内メール送信({mstr}入社)",
+                f"{mstr}入社の方へジョブカン事前案内メールを送る日です。"
+                f"入社書類作成アプリで作成→送信してください。"))
+            summary_lines.append(f"{ann:%Y/%m/%d}({defaults.WEEKDAYS[ann.weekday()]}) "
+                                 f"事前案内メール送信 — {mstr}入社")
+        if auto >= today:
+            events.append((auto,
+                f"ジョブカン登録日リマインドメール送信({mstr}入社)",
+                f"{mstr}入社の方へ、ジョブカン登録メール送信当日のリマインドを送る日です。"))
+            summary_lines.append(f"{auto:%Y/%m/%d}({defaults.WEEKDAYS[auto.weekday()]}) "
+                                 f"登録日リマインドメール送信 — {mstr}入社")
+    events.sort()
+    out = out_dir / "ジョブカン送信リマインド.ics"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0",
+             "PRODID:-//nyusha-app//jobkan//JP", "CALSCALE:GREGORIAN"]
+    for i, (d, summary, desc) in enumerate(events):
+        end = d + dt.timedelta(days=1)
+        lines += [
+            "BEGIN:VEVENT",
+            f"UID:jobkan-{d:%Y%m%d}-{i}@nyusha-app",
+            f"DTSTART;VALUE=DATE:{d:%Y%m%d}",
+            f"DTEND;VALUE=DATE:{end:%Y%m%d}",
+            f"SUMMARY:{summary}",
+            f"DESCRIPTION:{desc}",
+            "BEGIN:VALARM", "TRIGGER:PT0S", "ACTION:DISPLAY",
+            "DESCRIPTION:リマインド", "END:VALARM",
+            "END:VEVENT",
+        ]
+    lines.append("END:VCALENDAR")
+    out.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+    return out, summary_lines
+
+
 def jobkan_mail_contents(people: list[Person], nyusha_date
                          ) -> tuple[list[tuple[str, str, str]], list[str], list[str]]:
     """ジョブカン案内メール2通の(名前, 件名, 本文)とBCC・対象者名を返す。"""
@@ -250,7 +308,12 @@ def jobkan_mail_contents(people: list[Person], nyusha_date
     if not members:
         raise ValueError("この入社日のメールアドレスが1件もありません")
     bcc = [p.email for p in members]
-    ctx = {"BCC人数": len(bcc), "入社日": defaults.fmt_md(nyusha_date)}
+    ctx = {
+        "BCC人数": len(bcc),
+        "入社日": defaults.fmt_md(nyusha_date),
+        "ジョブカン送信日": defaults.fmt_md(defaults.jobkan_auto_date(nyusha_date)),
+        "事前案内送信日": defaults.fmt_md(defaults.jobkan_announce_date(nyusha_date)),
+    }
     mails = [
         ("1_事前案内", defaults.JOBKAN_MAIL1_SUBJECT,
          defaults.JOBKAN_MAIL1_BODY.format(**ctx)),
@@ -267,13 +330,21 @@ def generate_jobkan_mails(people: list[Person], base_dir: Path,
     d = nyusha_date
     folder = base_dir / f"{d:%Y%m}_ジョブカン案内メール({defaults.fmt_md(d)}入社)"
     folder.mkdir(parents=True, exist_ok=True)
+    # 添付PDFをフォルダにコピー(Gmailへのドラッグ用。差し替えたい場合はこのPDFを差し替え)
+    attach = []
+    if JOBKAN_MANUAL.exists():
+        dest = folder / "入社時のワークフロー申請について.pdf"
+        import shutil
+        shutil.copy(JOBKAN_MANUAL, dest)
+        attach = [dest]
+    cc = defaults.JOBKAN_CC
     outs = []
     for name, subj, body in mails:
-        eml = build_eml(", ".join(defaults.JOBKAN_TO), subj, body, [],
-                        folder / f"ジョブカン{name}.eml", bcc=bcc)
+        eml = build_eml(", ".join(defaults.JOBKAN_TO), subj, body, attach,
+                        folder / f"ジョブカン{name}.eml", bcc=bcc, cc=cc)
         (folder / f"ジョブカン{name}.txt").write_text(
-            f"宛先: {', '.join(defaults.JOBKAN_TO)}\nBCC: {', '.join(bcc)}\n"
-            f"件名: {subj}\n\n{body}", encoding="utf-8-sig")
+            f"宛先(To): {', '.join(defaults.JOBKAN_TO)}\nCC: {', '.join(cc)}\n"
+            f"BCC: {', '.join(bcc)}\n件名: {subj}\n\n{body}", encoding="utf-8-sig")
         outs.append(eml)
     return folder, outs, names
 

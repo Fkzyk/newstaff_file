@@ -350,34 +350,75 @@ for p in mailable:
                    f"添付するPDF: {'、'.join(a.name for a in attachments)}")
 
 # ===== 7. ジョブカン案内メール =====
-with st.expander("📮 ジョブカン案内メールの下書きを作る(入社日ごと・BCC自動設定)"):
-    st.caption("宛先は人事の3名、BCCに同じ入社日の新入社員全員が自動で入ります。"
-               "案内資料PDFの添付と日付の記入は送信前に手動で行ってください(本文冒頭に"
-               "チェックリストが入ります)。")
+# ===== ジョブカン送信リマインド(忘れ防止) =====
+from generator.pipeline import build_jobkan_reminders
+
+upcoming = []
+for d in sorted({p.nyusha_date for p in people
+                 if p.nyusha_date and p.email}):
+    ann = defaults.jobkan_announce_date(d)
+    auto = defaults.jobkan_auto_date(d)
+    members = [p.name for p in people if p.nyusha_date == d and p.email]
+    if ann >= today:
+        upcoming.append((ann, f"事前案内メール", d, members))
+    if auto >= today:
+        upcoming.append((auto, f"登録日リマインドメール", d, members))
+upcoming.sort()
+if upcoming:
+    st.header("⏰ ジョブカンメールの送信予定")
+    st.caption("入社月の25日(土日は前倒し)にジョブカンが登録メールを自動送信します。"
+               "その1週間前に事前案内、当日に登録日リマインドを送る想定です。忘れ防止に"
+               "下のボタンでカレンダー(Outlook/Googleカレンダー)へ登録できます。")
+    next_one = upcoming[0]
+    days = (next_one[0] - today).days
+    when = "本日" if days == 0 else f"あと{days}日"
+    st.info(f"📨 次の送信: **{next_one[0]:%Y/%m/%d}({defaults.WEEKDAYS[next_one[0].weekday()]})"
+            f"** — {defaults.fmt_md(next_one[2])}入社の{next_one[1]}({when})")
+    with st.expander("すべての送信予定を見る / カレンダーに登録する"):
+        for d0, kind, nd, members in upcoming:
+            st.write(f"- **{d0:%Y/%m/%d}({defaults.WEEKDAYS[d0.weekday()]})** "
+                     f"{kind} — {defaults.fmt_md(nd)}入社({'、'.join(members)})")
+        if st.button("📅 送信予定をカレンダーに登録するファイルを作る"):
+            ics, _lines = build_jobkan_reminders(people, out_dir)
+            open_folder(ics.parent)
+            st.success(f"✅ 「{ics.name}」を作りました。ダブルクリックすると"
+                       "Outlook/Googleカレンダーに予定と通知が登録されます。")
+
+with st.expander("📮 ジョブカン案内メールを作る(To=古川さん / CC=人事3名 / BCC=新入社員)"):
+    st.caption("宛先: To=古川さん本人、CC=人事3名、BCC=同じ入社日の新入社員全員(自動)。"
+               "日付は自動で入り、案内PDF「入社時のワークフロー申請について」も添付されます。"
+               "PDFを差し替えたい場合は templates/jobkan_workflow.pdf を入れ替えてください。")
     dates = sorted({p.nyusha_date for p in people
                     if p.nyusha_date and p.nyusha_date >= today and p.email})
     if not dates:
         st.write("(これから入社する方がいません)")
     for d in dates:
         members = [p.name for p in people if p.nyusha_date == d and p.email]
-        st.write(f"**{defaults.fmt_md(d)}入社**({len(members)}名: {'、'.join(members)})")
+        st.write(f"**{defaults.fmt_md(d)}入社**({len(members)}名: {'、'.join(members)})"
+                 f" / 事前案内 {defaults.fmt_md(defaults.jobkan_announce_date(d))} ・"
+                 f" 登録日 {defaults.fmt_md(defaults.jobkan_auto_date(d))}")
         c1, c2, c3 = st.columns(3)
         try:
             if c1.button("📧 Gmailで1通目(事前案内)", key=f"jbg1{d}"):
                 mails, bcc, _ = jobkan_mail_contents(people, d)
                 webbrowser.open(gmail_compose_url(
                     ", ".join(defaults.JOBKAN_TO), mails[0][1], mails[0][2],
-                    bcc=bcc, account=gmail_account))
-                st.success(f"Gmailを開きました(BCC {len(bcc)}名入り)")
-            if c2.button("📧 Gmailで2通目(リマインド)", key=f"jbg2{d}"):
+                    cc=defaults.JOBKAN_CC, bcc=bcc, account=gmail_account))
+                generate_jobkan_mails(people, out_dir, d)  # 添付PDFをフォルダに用意
+                open_folder(out_dir / f"{d:%Y%m}_ジョブカン案内メール({defaults.fmt_md(d)}入社)")
+                st.success(f"Gmailとフォルダを開きました(CC人事3名・BCC {len(bcc)}名)。"
+                           "PDFはフォルダからドラッグして添付してください。")
+            if c2.button("📧 Gmailで2通目(登録日)", key=f"jbg2{d}"):
                 mails, bcc, _ = jobkan_mail_contents(people, d)
                 webbrowser.open(gmail_compose_url(
                     ", ".join(defaults.JOBKAN_TO), mails[1][1], mails[1][2],
-                    bcc=bcc, account=gmail_account))
-                st.success(f"Gmailを開きました(BCC {len(bcc)}名入り)")
-            if c3.button("📄 .emlで保存", key=f"jobkan{d}"):
+                    cc=defaults.JOBKAN_CC, bcc=bcc, account=gmail_account))
+                generate_jobkan_mails(people, out_dir, d)
+                open_folder(out_dir / f"{d:%Y%m}_ジョブカン案内メール({defaults.fmt_md(d)}入社)")
+                st.success(f"Gmailとフォルダを開きました(CC人事3名・BCC {len(bcc)}名)。")
+            if c3.button("📄 .emlで保存(添付入り)", key=f"jobkan{d}"):
                 folder, outs, names = generate_jobkan_mails(people, out_dir, d)
-                st.success(f"✅ 2通の下書きを保存しました → `{folder}`")
+                st.success(f"✅ 2通の下書き(PDF添付入り)を保存しました → `{folder}`")
         except Exception as e:
             st.error(f"❌ {e}")
 
