@@ -100,7 +100,7 @@ MAIL_SHATAKU_PARAGRAPH_DEFAULT = """また、ご転居を伴うご入社とな�
 # ---------------------------------------------------------------- ジョブカン案内メール
 # 宛先: To=古川さん本人 / CC=人事3名 / BCC=同じ入社日の新入社員全員(自動設定)。
 # 添付PDF「入社時のワークフロー申請について」= templates/jobkan_workflow.pdf(差し替え可)。
-# 日付は入社月の25日(土日は直近の平日へ前倒し)にジョブカンが自動送信 → その1週間前に案内。
+# 日付は入社月の前月25日(土日は直近の平日へ前倒し)にジョブカンが自動送信 → その1週間前に案内。
 JOBKAN_TO = ["kazuyuki.furukawa@sukesan.co.jp"]
 JOBKAN_CC = [
     "fukiko.takahashi@sukesan.co.jp",
@@ -117,8 +117,13 @@ def _prev_weekday(d):
 
 
 def jobkan_auto_date(nyusha_date):
-    """ジョブカンの登録メールが自動送信される日(入社月25日、土日は前倒し)。"""
-    return _prev_weekday(dt.date(nyusha_date.year, nyusha_date.month, 25))
+    """ジョブカンの登録メールが自動送信される日(入社月の前月25日、土日は前倒し)。"""
+    y, m = nyusha_date.year, nyusha_date.month
+    if m == 1:
+        y, m = y - 1, 12
+    else:
+        m -= 1
+    return _prev_weekday(dt.date(y, m, 25))
 
 
 def jobkan_announce_date(nyusha_date):
