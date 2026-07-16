@@ -178,7 +178,7 @@ def generate_person(person: Person, base_dir: Path, cohort: dict, company: dict,
 
     def fname(title: str, ext: str) -> str:
         name_disp = person.name.replace(" ", "").replace("　", "")
-        return f"{sakusei:%Y%m%d}_{title}({name_disp}).{ext}"
+        return f"{sakusei:%Y%m%d}_{title}({name_disp}様).{ext}"
 
     report("入社のご案内を作成中…")
     annai = documents.render_annai(person, cohort, hakko_date,

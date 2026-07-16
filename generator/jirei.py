@@ -142,6 +142,6 @@ def render_jirei_doc(person, out_dir: Path, sakusei_date) -> Path:
     reiwa = defaults.fmt_reiwa(person.nyusha_date)
     data = build_jirei(sei, mei, furi_sei, furi_mei, reiwa)
     name_disp = person.name.replace(" ", "").replace("　", "")
-    out = out_dir / f"{sakusei_date:%Y%m%d}_入社辞令({name_disp}).doc"
+    out = out_dir / f"{sakusei_date:%Y%m%d}_入社辞令({name_disp}様).doc"
     out.write_bytes(data)
     return out
