@@ -143,14 +143,29 @@ function onOpen() {
     .addItem('毎朝のリマインドメールを有効にする', 'enableDailyReminder')
     .addItem('リマインドメールを止める', 'disableDailyReminder')
     .addToUi();
-  // シートを開いたときに期日の色を最新化し、要注意があればお知らせ
+  // シートを開いたときに取り残しを自己修復してから、期日の色を最新化する。
+  // (スクリプト更新前に追加された行など、onEditが効かなかった行もここで必ず追いつく)
   try {
     var flow = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_FLOW);
     if (flow) {
-      var items = refreshAttention_(flow);
-      if (items.length) {
-        toast_('日程の要注意が' + items.length + '件あります(赤い字=期限超過または3日以内)。' + items[0] + (items.length > 1 ? ' ほか' : ''));
+      var healedSched = 0, healedTel = 0;
+      var lastRow = flow.getLastRow();
+      if (lastRow >= FLOW.firstDataRow) {
+        healedSched = fillSchedules_(flow, FLOW.firstDataRow, lastRow);
+        healedTel = fillInterviewerPhones_(flow, FLOW.firstDataRow, lastRow, false, true);
       }
+      var items = refreshAttention_(flow);
+      var msgs = [];
+      if (healedSched || healedTel) {
+        msgs.push('取り残しを自動補完: ' +
+          (healedSched ? '日程' + healedSched + 'セル' : '') +
+          (healedSched && healedTel ? '・' : '') +
+          (healedTel ? '電話番号' + healedTel + '件' : ''));
+      }
+      if (items.length) {
+        msgs.push('日程の要注意が' + items.length + '件あります(赤い字=期限超過または3日以内)。' + items[0] + (items.length > 1 ? ' ほか' : ''));
+      }
+      if (msgs.length) toast_(msgs.join(' / '));
     }
   } catch (err) { /* 開くのを妨げない */ }
 }
@@ -425,6 +440,11 @@ function dailyReminder() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var flow = ss.getSheetByName(SHEET_FLOW);
   if (!flow) return;
+  // 取り残しの自己修復(onEditが効かなかった行への追いつき)をここでも行う
+  if (flow.getLastRow() >= FLOW.firstDataRow) {
+    fillSchedules_(flow, FLOW.firstDataRow, flow.getLastRow());
+    fillInterviewerPhones_(flow, FLOW.firstDataRow, flow.getLastRow(), false, true);
+  }
   var items = refreshAttention_(flow);
   if (!items.length) return;
   var email = Session.getEffectiveUser().getEmail();
@@ -459,14 +479,15 @@ function deleteReminderTriggers_() {
 
 /**
  * フローのstartRow〜endRowについて、T列(面接担当者)の名前を連絡先で調べ
- * U列(担当者電話番号)に入力する。
- * overwrite=true: U列を上書き(T列を変更した直後用)
- * overwrite=false: U列が空欄の行だけ埋める(一括入力用。手入力を消さない)
+ * U列(担当者電話番号)に入力する。入力・削除した件数の合計を返す。
+ * overwrite=true: U列を上書きし、T列が空ならU列も消す(T列を編集した直後用)
+ * overwrite=false: U列が空欄の行だけ埋める(一括入力・自己修復用。手入力を消さない)
+ * quiet=true: お知らせを出さない(シートを開いたときの自己修復用)
  */
-function fillInterviewerPhones_(flow, startRow, endRow, overwrite) {
+function fillInterviewerPhones_(flow, startRow, endRow, overwrite, quiet) {
   var contacts = loadContacts_();
-  if (!contacts) { toast_('シート「' + SHEET_CONTACTS + '」が見つかりません。'); return; }
-  if (!contacts.length) { toast_('シート「' + SHEET_CONTACTS + '」に電話番号入りの連絡先がありません。'); return; }
+  if (!contacts) { if (!quiet) toast_('シート「' + SHEET_CONTACTS + '」が見つかりません。'); return 0; }
+  if (!contacts.length) { if (!quiet) toast_('シート「' + SHEET_CONTACTS + '」に電話番号入りの連絡先がありません。'); return 0; }
 
   var n = endRow - startRow + 1;
   // 電話番号の先頭の0が数値化で消えないよう表示値で読む
@@ -494,7 +515,8 @@ function fillInterviewerPhones_(flow, startRow, endRow, overwrite) {
   if (updated) parts.push('担当者電話番号を' + updated + '件入力しました');
   if (cleared) parts.push('担当者が消されたので電話番号も' + cleared + '件消しました');
   if (problems.length) parts.push('連絡先で特定できません: ' + problems.join('、'));
-  if (parts.length) toast_(parts.join('。'));
+  if (!quiet && parts.length) toast_(parts.join('。'));
+  return updated + cleared;
 }
 
 /**
