@@ -137,6 +137,9 @@ function onOpen() {
     .addItem('日程を自動入力(引渡日から逆算)', 'fillAllSchedules')
     .addItem('期限チェックを今すぐ実行', 'checkDeadlines')
     .addSeparator()
+    .addItem('✓ 選択した日程を完了にする', 'markScheduleDone')
+    .addItem('選択した日程の完了を取り消す', 'unmarkScheduleDone')
+    .addSeparator()
     .addItem('毎朝のリマインドメールを有効にする', 'enableDailyReminder')
     .addItem('リマインドメールを止める', 'disableDailyReminder')
     .addToUi();
@@ -365,6 +368,56 @@ function refreshAttention_(flow) {
 }
 
 /**
+ * メニュー用: 選択中の日程セルを「完了」にする(グレー+取り消し線)。
+ * 完了にすると赤字・リマインドの対象から外れる。
+ */
+function markScheduleDone() { applyDoneMark_(true); }
+
+/** メニュー用: 選択中の日程セルの「完了」を取り消す(必要なら赤字に戻る) */
+function unmarkScheduleDone() { applyDoneMark_(false); }
+
+function applyDoneMark_(done) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getActiveSheet();
+  if (sheet.getName() !== SHEET_FLOW) {
+    toast_('「' + SHEET_FLOW + '」シートで、完了にしたい日程のセルを選んでから押してください。');
+    return;
+  }
+  var rangeList = ss.getActiveRangeList();
+  if (!rangeList) { toast_('完了にしたい日程のセルを選んでから押してください。'); return; }
+
+  var count = 0;
+  var ranges = rangeList.getRanges();
+  for (var k = 0; k < ranges.length; k++) {
+    // 選択範囲のうち、日程エリア(データ行×C〜I列)に重なる部分だけに適用
+    var r1 = Math.max(ranges[k].getRow(), FLOW.firstDataRow);
+    var r2 = ranges[k].getLastRow();
+    var c1 = Math.max(ranges[k].getColumn(), SCHEDULE.firstCol);
+    var c2 = Math.min(ranges[k].getLastColumn(), SCHEDULE.lastCol);
+    if (r2 < r1 || c2 < c1) continue;
+    var target = sheet.getRange(r1, c1, r2 - r1 + 1, c2 - c1 + 1);
+    if (done) {
+      target.setFontColor('#999999').setFontLine('line-through')
+            .setBackground('#efefef').setFontWeight('normal');
+    } else {
+      target.setFontColor(null).setFontLine('none')
+            .setBackground(null).setFontWeight('normal');
+    }
+    var vals = target.getValues();
+    for (var i = 0; i < vals.length; i++) {
+      for (var j = 0; j < vals[i].length; j++) if (vals[i][j] instanceof Date) count++;
+    }
+  }
+  if (!count) {
+    toast_('選択の中に日程(時給調査依頼〜面接開始の日付)がありません。日付のセルを選んでから押してください。');
+    return;
+  }
+  if (!done) refreshAttention_(sheet); // 取り消した日程がまだ危険なら赤字に戻す
+  toast_(done ? '✓ ' + count + '件の日程を完了にしました(グレー+取り消し線)'
+              : count + '件の完了を取り消しました');
+}
+
+/**
  * 毎朝の自動リマインド(時間トリガーから実行)。
  * 要注意の日程がある日だけ、自分宛にまとめメールを送る。
  */
@@ -418,10 +471,17 @@ function fillInterviewerPhones_(flow, startRow, endRow, overwrite) {
   var n = endRow - startRow + 1;
   // 電話番号の先頭の0が数値化で消えないよう表示値で読む
   var tu = flow.getRange(startRow, FLOW.col.interviewer, n, 2).getDisplayValues();
-  var updated = 0, problems = [];
+  var updated = 0, cleared = 0, problems = [];
   for (var i = 0; i < n; i++) {
     var name = clean_(tu[i][0]);
-    if (!name) continue;                            // T列が空の行は触らない
+    if (!name) {
+      // 担当者を消したら電話番号も消す(T列を編集した直後だけ。一括入力では触らない)
+      if (overwrite && clean_(tu[i][1])) {
+        flow.getRange(startRow + i, FLOW.col.interviewerTel).setValue('');
+        cleared++;
+      }
+      continue;
+    }
     if (!overwrite && clean_(tu[i][1])) continue;   // 一括入力ではU列入力済みを守る
     var res = interviewerPhoneText_(name, contacts);
     problems = problems.concat(res.missing);
@@ -430,11 +490,11 @@ function fillInterviewerPhones_(flow, startRow, endRow, overwrite) {
       updated++;
     }
   }
-  var msg = updated > 0 ? '担当者電話番号を' + updated + '件入力しました' : '';
-  if (problems.length) {
-    msg += (msg ? '。' : '') + '連絡先で特定できません: ' + problems.join('、');
-  }
-  if (msg) toast_(msg);
+  var parts = [];
+  if (updated) parts.push('担当者電話番号を' + updated + '件入力しました');
+  if (cleared) parts.push('担当者が消されたので電話番号も' + cleared + '件消しました');
+  if (problems.length) parts.push('連絡先で特定できません: ' + problems.join('、'));
+  if (parts.length) toast_(parts.join('。'));
 }
 
 /**
