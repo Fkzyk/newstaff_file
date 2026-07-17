@@ -248,7 +248,8 @@ function syncNewStore(mirror) {
   flow.getRange(targetRow, FLOW.col.dept, 1, ks.length).setValues([ks]);
 
   // 引渡日が分かっていれば、採用日程(C〜I)の空欄セルを逆算で埋める
-  if (handover instanceof Date) fillSchedules_(flow, targetRow, targetRow);
+  // (文字列の引渡日もfillSchedules_側で解釈するので常に呼ぶ)
+  fillSchedules_(flow, targetRow, targetRow);
 
   var label = (parsed.storeNo !== '' ? parsed.storeNo + ' ' : '') + parsed.storeName;
   toast_((isNew ? '新しい行を追加しました' : '既存の行を更新しました') + ': ' + label + '(' + targetRow + '行目)' +
@@ -282,12 +283,13 @@ function fillSchedules_(flow, startRow, endRow) {
   var width = SCHEDULE.lastCol - SCHEDULE.firstCol + 1;
   var range = flow.getRange(startRow, SCHEDULE.firstCol, n, width);
   var grid = range.getValues();
-  var handovers = flow.getRange(startRow, FLOW.col.handover, n, 1).getValues();
+  var handovers = flow.getRange(startRow, FLOW.col.handover, n, 2).getValues(); // O(引渡日)とP(グランドOP)
   var today = today_();
   var filled = 0;
   for (var i = 0; i < n; i++) {
-    var o = handovers[i][0];
-    if (!(o instanceof Date)) continue;
+    // 「11/10（予定）」のような文字列でも日付として解釈する(年はグランドOPから推定)
+    var o = parseDateish_(handovers[i][0], handovers[i][1]);
+    if (!o) continue;
     var plan = scheduleFromHandover_(o);
     if (plan[plan.length - 1].getTime() < today.getTime()) continue; // 面接開始が過去=昔の店は触らない
     for (var j = 0; j < width; j++) {
@@ -611,6 +613,28 @@ function nextMonday_(d) {
   return addDays_(d, (8 - d.getDay()) % 7);
 }
 
+/**
+ * 日付らしい値を日付にする。Dateはそのまま。
+ * 「11/10（予定）」「２０２６/１１/１０」のような文字列も解釈する。
+ * 年が書かれていないときは hint(同じ行のグランドOPなど)の年を使い、
+ * その年だとhintより後になってしまう場合は前年とみなす(引渡日はグランドOPより前のため)。
+ * 解釈できなければ null。
+ */
+function parseDateish_(v, hint) {
+  if (v instanceof Date) return v;
+  var s = String(v || '').replace(/[０-９]/g, function (d) { return String.fromCharCode(d.charCodeAt(0) - 0xFEE0); });
+  if (!s.trim()) return null;
+  var m = s.match(/(\d{4})\s*[\/\-年]\s*(\d{1,2})\s*[\/\-月]\s*(\d{1,2})/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  m = s.match(/(\d{1,2})\s*[\/月]\s*(\d{1,2})/);
+  if (!m) return null;
+  var hintDate = (hint instanceof Date) ? hint : null;
+  var year = hintDate ? hintDate.getFullYear() : today_().getFullYear();
+  var d = new Date(year, Number(m[1]) - 1, Number(m[2]));
+  if (hintDate && d.getTime() > hintDate.getTime()) d = new Date(year - 1, Number(m[1]) - 1, Number(m[2]));
+  return d;
+}
+
 /** 今日の0時 */
 function today_() {
   var t = new Date();
@@ -676,13 +700,13 @@ function lookupMaster_(ss, storeNo, storeName) {
   if (last < MASTER.firstDataRow) return null;
   var vals = m.getRange(1, 1, last, MASTER.col.manager).getValues();
 
-  var targetName = normName_(storeName);
+  var targetName = normStore_(storeName);
   var byName = null;
   for (var r = MASTER.firstDataRow - 1; r < vals.length; r++) {
     var row = vals[r];
     var no = row[MASTER.col.storeNo - 1];
     if (storeNo !== '' && no !== '' && Number(no) === Number(storeNo)) return masterHit_(row);
-    if (!byName && targetName && normName_(row[MASTER.col.storeName - 1]) === targetName) {
+    if (!byName && targetName && normStore_(row[MASTER.col.storeName - 1]) === targetName) {
       byName = masterHit_(row);
     }
   }
@@ -704,12 +728,12 @@ function findTargetRow_(flow, storeNo, storeName) {
   var last = flow.getLastRow();
   if (last < FLOW.firstDataRow) return -1;
   var vals = flow.getRange(FLOW.firstDataRow, 1, last - FLOW.firstDataRow + 1, 2).getValues();
-  var target = normName_(storeName);
+  var target = normStore_(storeName);
   var byName = -1;
   for (var i = 0; i < vals.length; i++) {
     var no = vals[i][0];
     if (storeNo !== '' && no !== '' && Number(no) === Number(storeNo)) return FLOW.firstDataRow + i;
-    if (byName < 0 && target && normName_(vals[i][1]) === target) byName = FLOW.firstDataRow + i;
+    if (byName < 0 && target && normStore_(vals[i][1]) === target) byName = FLOW.firstDataRow + i;
   }
   return byName;
 }
@@ -719,6 +743,11 @@ function normName_(x) {
   return String(x || '')
     .replace(/[\s　]/g, '')
     .replace(/[がヶヵ]/g, 'ケ');
+}
+
+/** 店名専用の正規化: normName_に加えて末尾の「店」を落とす(和泉観音寺店=和泉観音寺) */
+function normStore_(x) {
+  return normName_(x).replace(/店$/, '');
 }
 
 /** 「貴島 遼介'20」→「貴島 遼介」 */
