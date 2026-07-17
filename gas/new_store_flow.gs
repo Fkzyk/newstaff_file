@@ -16,15 +16,19 @@
  *     単セルの手直しでは空欄は書かない(既存値を消さない)
  *   - 営業部・営業部長と、住所分割に失敗した都道府県・市町村は
  *     手入力を尊重して自動では消さない
- *   - 手動で入れる列(採用フローの日程 C〜J、面接会場 Q、面接担当者 T、
- *     担当者電話番号 U)には一切触れない
+ *   - 手動で入れる列(採用フローの日程 C〜J、面接会場 Q、面接担当者 T)には
+ *     一切触れない
+ *   - フローの T列(面接担当者)を入力・変更すると、U列(担当者電話番号)を
+ *     「連絡先」シート(Googleコンタクトのエクスポート)から自動入力する。
+ *     「長屋（1週間）→石井」のような複数名・注釈付きにも対応
  *   - 結果は画面右下のお知らせ(トースト)で毎回表示。エラーも表示する
  */
 
 // ===== シート名(実物に合わせる。変更時はここだけ直す) =====
-var SHEET_SRC    = '新店情報シート貼付';   // 貼り付け元フォーム
-var SHEET_FLOW   = '新店（情報）フロー';   // 自動入力する一覧
-var SHEET_MASTER = '営業部';               // 営業部・営業部長のマスター
+var SHEET_SRC      = '新店情報シート貼付';   // 貼り付け元フォーム
+var SHEET_FLOW     = '新店（情報）フロー';   // 自動入力する一覧
+var SHEET_MASTER   = '営業部';               // 営業部・営業部長のマスター
+var SHEET_CONTACTS = '連絡先';               // 面接担当者の電話番号マスター(Googleコンタクト形式)
 
 // ===== 貼付フォーム内の「固定セル」位置 =====
 var SRC = {
@@ -51,7 +55,9 @@ var FLOW = {
     grandOpen: 16, // P グランドOP    ← フォーム K6
     // Q=17 面接会場は手動列。K〜Sの一括書き込みでも現状値を保持する
     tel:       18, // R 店舗電話番号  ← フォーム C5
-    address:   19  // S 店舗住所      ← フォーム H4
+    address:   19, // S 店舗住所      ← フォーム H4
+    interviewer:    20, // T 面接担当者(手動入力)
+    interviewerTel: 21  // U 担当者電話番号 ← T列入力時に連絡先シートから自動入力
   }
 };
 
@@ -62,19 +68,34 @@ var MASTER = {
   col: { dept: 1, pref: 2, city: 3, storeNo: 4, storeName: 5, manager: 11 }
 };
 
+// ===== 連絡先シートの列番号(A=1。Googleコンタクトのエクスポート形式) =====
+var CONTACTS = {
+  firstDataRow: 2,
+  col: { first: 1, last: 3, phone1: 25, phone2: 27 } // A=名, C=姓, Y=電話1, AA=電話2
+};
+
 /**
  * 貼付シートが編集されたら自動実行(シンプルトリガー)。
  */
 function onEdit(e) {
   try {
     if (!e || !e.range) return;
-    if (e.range.getSheet().getName() !== SHEET_SRC) return;
-    // フォームより下(業者一覧など)の編集では同期しない
-    if (e.range.getRow() > SRC_FORM_LAST_ROW) return;
-    // C4(店番・店名)を含む編集=フォームの貼り直しとみなし「そのまま写す」モード。
-    // それ以外の単発修正は「空欄では消さない」モード。
-    var mirror = rangeContains_(e.range, SRC.storeNoName);
-    syncNewStore(mirror);
+    var sheetName = e.range.getSheet().getName();
+    if (sheetName === SHEET_SRC) {
+      // フォームより下(業者一覧など)の編集では同期しない
+      if (e.range.getRow() > SRC_FORM_LAST_ROW) return;
+      // C4(店番・店名)を含む編集=フォームの貼り直しとみなし「そのまま写す」モード。
+      // それ以外の単発修正は「空欄では消さない」モード。
+      syncNewStore(rangeContains_(e.range, SRC.storeNoName));
+    } else if (sheetName === SHEET_FLOW) {
+      // T列(面接担当者)が編集されたら、その行のU列に電話番号を自動入力
+      var colT = FLOW.col.interviewer;
+      if (e.range.getColumn() > colT || e.range.getLastColumn() < colT) return;
+      var startRow = Math.max(e.range.getRow(), FLOW.firstDataRow);
+      var endRow = e.range.getLastRow();
+      if (endRow < startRow) return;
+      fillInterviewerPhones_(e.range.getSheet(), startRow, endRow, true);
+    }
   } catch (err) {
     toast_('自動反映でエラーが起きました: ' + err);
   }
@@ -87,7 +108,20 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('新店フロー')
     .addItem('貼付フォームを今すぐ取り込む', 'syncNewStore')
+    .addItem('面接担当者の電話番号を一括入力', 'fillAllInterviewerPhones')
     .addToUi();
+}
+
+/**
+ * メニュー用: フロー一覧全行のU列(担当者電話番号)を連絡先から入力する。
+ * 手で入れた値を消さないよう、U列が空欄の行だけ埋める。
+ */
+function fillAllInterviewerPhones() {
+  var flow = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_FLOW);
+  if (!flow) { toast_('シート「' + SHEET_FLOW + '」が見つかりません。'); return; }
+  var last = flow.getLastRow();
+  if (last < FLOW.firstDataRow) { toast_('フロー一覧にデータ行がありません。'); return; }
+  fillInterviewerPhones_(flow, FLOW.firstDataRow, last, false);
 }
 
 /**
@@ -158,6 +192,113 @@ function syncNewStore(mirror) {
   var label = (parsed.storeNo !== '' ? parsed.storeNo + ' ' : '') + parsed.storeName;
   toast_((isNew ? '新しい行を追加しました' : '既存の行を更新しました') + ': ' + label + '(' + targetRow + '行目)' +
          (master ? '' : ' ※営業部が見つからず空欄です'));
+}
+
+// ============ 面接担当者の電話番号(連絡先シートから) ============
+
+/**
+ * フローのstartRow〜endRowについて、T列(面接担当者)の名前を連絡先で調べ
+ * U列(担当者電話番号)に入力する。
+ * overwrite=true: U列を上書き(T列を変更した直後用)
+ * overwrite=false: U列が空欄の行だけ埋める(一括入力用。手入力を消さない)
+ */
+function fillInterviewerPhones_(flow, startRow, endRow, overwrite) {
+  var contacts = loadContacts_();
+  if (!contacts) { toast_('シート「' + SHEET_CONTACTS + '」が見つかりません。'); return; }
+  if (!contacts.length) { toast_('シート「' + SHEET_CONTACTS + '」に電話番号入りの連絡先がありません。'); return; }
+
+  var n = endRow - startRow + 1;
+  // 電話番号の先頭の0が数値化で消えないよう表示値で読む
+  var tu = flow.getRange(startRow, FLOW.col.interviewer, n, 2).getDisplayValues();
+  var updated = 0, problems = [];
+  for (var i = 0; i < n; i++) {
+    var name = clean_(tu[i][0]);
+    if (!name) continue;                            // T列が空の行は触らない
+    if (!overwrite && clean_(tu[i][1])) continue;   // 一括入力ではU列入力済みを守る
+    var res = interviewerPhoneText_(name, contacts);
+    problems = problems.concat(res.missing);
+    if (res.text && res.text !== clean_(tu[i][1])) {
+      flow.getRange(startRow + i, FLOW.col.interviewerTel).setValue(res.text);
+      updated++;
+    }
+  }
+  var msg = updated > 0 ? '担当者電話番号を' + updated + '件入力しました' : '';
+  if (problems.length) {
+    msg += (msg ? '。' : '') + '連絡先で特定できません: ' + problems.join('、');
+  }
+  if (msg) toast_(msg);
+}
+
+/**
+ * 「長屋（1週間）→石井」のようなT列の値を電話番号文字列にする。
+ * 1名なら電話番号のみ、複数名なら「名前+番号」を「、」でつなぐ。
+ * 特定できなかった名前は missing に入れて返す(U列には書かない)。
+ */
+function interviewerPhoneText_(nameCell, contacts) {
+  var s = String(nameCell).replace(/[（(][^）)]*[）)]/g, ''); // （注釈）を除去
+  var tokens = s.split(/[→、,，・／/＆&\n]+/).map(clean_).filter(function (x) { return x; });
+  var parts = [], missing = [];
+  for (var i = 0; i < tokens.length; i++) {
+    var r = resolveContact_(tokens[i], contacts);
+    if (r.phone) parts.push({ name: tokens[i], phone: r.phone });
+    if (r.miss) missing.push(r.miss);
+  }
+  var text = '';
+  if (tokens.length === 1 && parts.length === 1) text = parts[0].phone;
+  else text = parts.map(function (p) { return p.name + p.phone; }).join('、');
+  return { text: text, missing: missing };
+}
+
+/**
+ * 名前1つを連絡先で解決する。優先順:
+ *   ①姓+名の完全一致 ②1文字違い(姓2文字一致が条件。沙/紗のような字体違い対策)
+ *   ③姓だけで1人に決まる ④前方一致で1人に決まる
+ * 複数候補・該当なしは入力しない(missで理由を返す)。
+ */
+function resolveContact_(token, contacts) {
+  var t = normName_(token);
+  if (!t) return { phone: '', miss: '' };
+  var exact = [], near = [], byLast = [], prefix = [];
+  for (var i = 0; i < contacts.length; i++) {
+    var c = contacts[i];
+    if (c.full === t) exact.push(c);
+    if (c.full.length === t.length && t.length >= 3 && c.full.slice(0, 2) === t.slice(0, 2)) {
+      var diff = 0;
+      for (var k = 0; k < t.length; k++) if (c.full.charAt(k) !== t.charAt(k)) diff++;
+      if (diff <= 1) near.push(c);
+    }
+    if (c.last === t) byLast.push(c);
+    if (c.full.indexOf(t) === 0) prefix.push(c);
+  }
+  if (exact.length === 1) return { phone: exact[0].phone, miss: '' };
+  if (near.length === 1) return { phone: near[0].phone, miss: '' };
+  if (byLast.length === 1) return { phone: byLast[0].phone, miss: '' };
+  if (byLast.length > 1) return { phone: '', miss: token + '(同姓' + byLast.length + '名)' };
+  if (prefix.length === 1) return { phone: prefix[0].phone, miss: '' };
+  return { phone: '', miss: token + '(見つからない)' };
+}
+
+/**
+ * 連絡先シート(Googleコンタクト形式)を読み込む。
+ * 姓(C列)と電話番号(Y列、無ければAA列)がある行だけ対象。
+ * 戻り値: [{full:'姓名(正規化)', last:'姓(正規化)', phone:'090-...'}]。シートが無ければnull
+ */
+function loadContacts_() {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_CONTACTS);
+  if (!sh) return null;
+  var last = sh.getLastRow();
+  if (last < CONTACTS.firstDataRow) return [];
+  // 電話番号の書式(先頭0・ハイフン)を保つため表示値で読む
+  var vals = sh.getRange(CONTACTS.firstDataRow, 1, last - CONTACTS.firstDataRow + 1, CONTACTS.col.phone2).getDisplayValues();
+  var out = [];
+  for (var i = 0; i < vals.length; i++) {
+    var lastName = clean_(vals[i][CONTACTS.col.last - 1]);
+    var firstName = clean_(vals[i][CONTACTS.col.first - 1]);
+    var phone = clean_(vals[i][CONTACTS.col.phone1 - 1]) || clean_(vals[i][CONTACTS.col.phone2 - 1]);
+    if (!lastName || !phone) continue;
+    out.push({ full: normName_(lastName + firstName), last: normName_(lastName), phone: phone });
+  }
+  return out;
 }
 
 // ================= ヘルパー =================
