@@ -9,13 +9,19 @@
  *   「新店（情報）フロー」の該当店舗の行が自動で埋まります。
  *
  * 動作:
- *   - 店番で照合し、同じ店番の行があれば更新／無ければ最下行に追加（アップサート）
- *   - 手動で入れる列（採用フローの日程 C〜J、面接会場 Q、面接担当者 T、
- *     担当者電話番号 U）は自動では触りません（上書きしません）
- *   - 営業部・営業部長は「営業部」シートから店番／店名で照合して取得
+ *   - 店番で照合し、同じ店番の行があれば更新。店番が無い新店は店名で照合。
+ *     どちらも無ければ最下行に追加（重複行は作らない）
+ *   - フォームを貼り直した(C4を含む編集をした)ときは、フォームの内容を
+ *     そのまま写す=フォームで空欄の項目はフローも空欄に直す(古い値を残さない)。
+ *     単セルの手直しでは空欄は書かない(既存値を消さない)
+ *   - 営業部・営業部長と、住所分割に失敗した都道府県・市町村は
+ *     手入力を尊重して自動では消さない
+ *   - 手動で入れる列(採用フローの日程 C〜J、面接会場 Q、面接担当者 T、
+ *     担当者電話番号 U)には一切触れない
+ *   - 結果は画面右下のお知らせ(トースト)で毎回表示。エラーも表示する
  */
 
-// ===== シート名（実物に合わせる。変更時はここだけ直す） =====
+// ===== シート名(実物に合わせる。変更時はここだけ直す) =====
 var SHEET_SRC    = '新店情報シート貼付';   // 貼り付け元フォーム
 var SHEET_FLOW   = '新店（情報）フロー';   // 自動入力する一覧
 var SHEET_MASTER = '営業部';               // 営業部・営業部長のマスター
@@ -23,13 +29,14 @@ var SHEET_MASTER = '営業部';               // 営業部・営業部長のマ�
 // ===== 貼付フォーム内の「固定セル」位置 =====
 var SRC = {
   storeNoName: 'C4', // 「341  横浜霧ケ丘」= 店番＋店名
-  address:     'H4', // 住所（→都道府県・市町村・店舗住所）
-  tel:         'C5', // 電話番号（→店舗電話番号）
-  handover:    'E6', // 引渡予定日（→引渡日）
+  address:     'H4', // 住所(→都道府県・市町村・店舗住所)
+  tel:         'C5', // 電話番号(→店舗電話番号)
+  handover:    'E6', // 引渡予定日(→引渡日)
   grandOpen:   'K6'  // グランドOP
 };
+var SRC_FORM_LAST_ROW = 9; // フォーム部分の最終行(これより下=業者表の編集では同期しない)
 
-// ===== フロー一覧の列番号（A=1）。ヘッダーは3行目・データは4行目から =====
+// ===== フロー一覧の列番号(A=1)。ヘッダーは3行目・データは4行目から =====
 var FLOW = {
   headerRow: 3,
   firstDataRow: 4,
@@ -42,12 +49,13 @@ var FLOW = {
     manager:   14, // N 営業部長      ← 営業部シートから
     handover:  15, // O 引渡日        ← フォーム E6
     grandOpen: 16, // P グランドOP    ← フォーム K6
+    // Q=17 面接会場は手動列。K〜Sの一括書き込みでも現状値を保持する
     tel:       18, // R 店舗電話番号  ← フォーム C5
     address:   19  // S 店舗住所      ← フォーム H4
   }
 };
 
-// ===== 営業部マスターの列番号（A=1） =====
+// ===== 営業部マスターの列番号(A=1) =====
 var MASTER = {
   headerRow: 1,
   firstDataRow: 2,
@@ -55,15 +63,20 @@ var MASTER = {
 };
 
 /**
- * 貼付シートが編集されたら自動実行（シンプルトリガー）。
+ * 貼付シートが編集されたら自動実行(シンプルトリガー)。
  */
 function onEdit(e) {
   try {
     if (!e || !e.range) return;
     if (e.range.getSheet().getName() !== SHEET_SRC) return;
-    syncNewStore();
+    // フォームより下(業者一覧など)の編集では同期しない
+    if (e.range.getRow() > SRC_FORM_LAST_ROW) return;
+    // C4(店番・店名)を含む編集=フォームの貼り直しとみなし「そのまま写す」モード。
+    // それ以外の単発修正は「空欄では消さない」モード。
+    var mirror = rangeContains_(e.range, SRC.storeNoName);
+    syncNewStore(mirror);
   } catch (err) {
-    // 貼り付け中の中途半端な状態でのエラーは黙って無視（次の編集で再実行される）
+    toast_('自動反映でエラーが起きました: ' + err);
   }
 }
 
@@ -79,69 +92,101 @@ function onOpen() {
 
 /**
  * 本体：貼付フォームを読み取り、フロー一覧へアップサートする。
+ * mirror=true(既定): フォームの内容をそのまま写す(空欄はフローも空欄にする)。
+ * mirror=false: 空欄の項目は書かない(単セル修正時の安全モード)。
  */
-function syncNewStore() {
+function syncNewStore(mirror) {
+  mirror = (mirror !== false);
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var src  = ss.getSheetByName(SHEET_SRC);
   var flow = ss.getSheetByName(SHEET_FLOW);
-  if (!src || !flow) return;
+  if (!src) { toast_('シート「' + SHEET_SRC + '」が見つかりません。シート名を確認してください。'); return; }
+  if (!flow) { toast_('シート「' + SHEET_FLOW + '」が見つかりません。シート名を確認してください。'); return; }
 
-  // --- フォームから値を取得 ---
-  var raw = getStr_(src, SRC.storeNoName);
+  // --- フォームを一括読取(C4:K6) ---
+  var block = src.getRange(4, 3, 3, 9).getValues(); // 行4〜6 × 列C〜K
+  var raw       = clean_(block[0][0]); // C4 店番・店名
+  var address   = clean_(block[0][5]); // H4 住所
+  var tel       = clean_(block[1][0]); // C5 電話番号
+  var handover  = block[2][2];         // E6 引渡予定日(Dateのまま)
+  var grandOpen = block[2][8];         // K6 グランドOP(Dateのまま)
+
   var parsed = parseStoreNoName_(raw);
-  if (!parsed.storeNo && !parsed.storeName) return; // 店番も店名も無ければ何もしない
+  if (!parsed.storeNo && !parsed.storeName) return; // フォームが空(貼り付け前)なら何もしない
 
-  var address = getStr_(src, SRC.address);
   var pc = splitAddress_(address); // {pref, city}
-
   var master = lookupMaster_(ss, parsed.storeNo, parsed.storeName); // {dept, manager} or null
 
-  // --- 書き込む列だけを定義（手動列には触れない） ---
-  var writes = {};
-  writes[FLOW.col.storeNo]   = parsed.storeNo;   // A
-  writes[FLOW.col.storeName] = parsed.storeName; // B
-  if (pc.pref) writes[FLOW.col.pref] = pc.pref;  // L
-  if (pc.city) writes[FLOW.col.city] = pc.city;  // M
-  writes[FLOW.col.handover]  = getVal_(src, SRC.handover);  // O
-  writes[FLOW.col.grandOpen] = getVal_(src, SRC.grandOpen); // P
-  var tel = getStr_(src, SRC.tel);
-  if (tel) writes[FLOW.col.tel] = tel;           // R
-  if (address) writes[FLOW.col.address] = address; // S
+  // --- 対象行を決定(店番→店名の順で照合。無ければ最下行に追加) ---
+  var targetRow = findTargetRow_(flow, parsed.storeNo, parsed.storeName);
+  var isNew = targetRow < 0;
+  if (isNew) targetRow = Math.max(flow.getLastRow() + 1, FLOW.firstDataRow);
+
+  // --- A:B(所属コード・所属名)。空では消さない ---
+  var ab = flow.getRange(targetRow, 1, 1, 2).getValues()[0];
+  if (parsed.storeNo !== '') ab[0] = parsed.storeNo;
+  if (parsed.storeName)      ab[1] = parsed.storeName;
+  flow.getRange(targetRow, 1, 1, 2).setValues([ab]);
+
+  // --- K:S(11〜19列)を一括で読み→必要な列だけ差し替え→一括で書く。
+  //     Q(面接会場・手動列)は読んだ現状値をそのまま書き戻すので変わらない ---
+  var ks = flow.getRange(targetRow, FLOW.col.dept, 1, FLOW.col.address - FLOW.col.dept + 1).getValues()[0];
+  var put = function (col, v, force) {
+    if (force || (v !== '' && v !== null && v !== undefined)) ks[col - FLOW.col.dept] = v;
+  };
+  // 営業部・営業部長: 照合できたときだけ書く(手入力を消さない)
   if (master) {
-    if (master.dept)    writes[FLOW.col.dept]    = master.dept;    // K
-    if (master.manager) writes[FLOW.col.manager] = master.manager; // N
+    put(FLOW.col.dept, master.dept);
+    put(FLOW.col.manager, master.manager);
   }
+  // 都道府県・市町村: 住所から取れたときだけ書く。
+  // mirrorモードで住所自体が空なら、住所と一緒に空欄へ戻す
+  if (address) {
+    put(FLOW.col.pref, pc.pref);
+    put(FLOW.col.city, pc.city);
+  } else if (mirror) {
+    put(FLOW.col.pref, '', true);
+    put(FLOW.col.city, '', true);
+  }
+  // 引渡日・グランドOP・電話・住所: mirrorモードではフォームをそのまま写す(空欄含む)
+  put(FLOW.col.handover,  handover,  mirror);
+  put(FLOW.col.grandOpen, grandOpen, mirror);
+  put(FLOW.col.tel,       tel,       mirror);
+  put(FLOW.col.address,   address,   mirror);
+  flow.getRange(targetRow, FLOW.col.dept, 1, ks.length).setValues([ks]);
 
-  // --- 対象行を決定（店番で照合／無ければ最下行に追加） ---
-  var targetRow = findRowByStoreNo_(flow, parsed.storeNo);
-  if (targetRow < 0) targetRow = Math.max(flow.getLastRow() + 1, FLOW.firstDataRow);
-
-  // --- 書き込み ---
-  Object.keys(writes).forEach(function (colStr) {
-    var col = Number(colStr);
-    var v = writes[col];
-    if (v === '' || v === null || v === undefined) return;
-    flow.getRange(targetRow, col).setValue(v);
-  });
+  var label = (parsed.storeNo !== '' ? parsed.storeNo + ' ' : '') + parsed.storeName;
+  toast_((isNew ? '新しい行を追加しました' : '既存の行を更新しました') + ': ' + label + '(' + targetRow + '行目)' +
+         (master ? '' : ' ※営業部が見つからず空欄です'));
 }
 
 // ================= ヘルパー =================
 
-function getStr_(sheet, a1) {
-  var v = sheet.getRange(a1).getValue();
-  return (v === null || v === undefined) ? '' : String(v).trim();
-}
-function getVal_(sheet, a1) {
-  return sheet.getRange(a1).getValue(); // 日付はDateのまま返す
+/** 編集範囲がa1セルを含むか */
+function rangeContains_(range, a1) {
+  var cell = range.getSheet().getRange(a1);
+  var r = cell.getRow(), c = cell.getColumn();
+  return range.getRow() <= r && range.getLastRow() >= r &&
+         range.getColumn() <= c && range.getLastColumn() >= c;
 }
 
-/** 「341  横浜霧ケ丘」→ {storeNo:341, storeName:'横浜霧ケ丘'} */
+/** 「341  横浜霧ケ丘」→ {storeNo:341, storeName:'横浜霧ケ丘'}。全角数字・全角空白も可 */
 function parseStoreNoName_(raw) {
-  var s = String(raw || '').replace(/　/g, ' ').trim();
+  var s = String(raw || '')
+    .replace(/　/g, ' ')
+    .replace(/[０-９]/g, function (d) { return String.fromCharCode(d.charCodeAt(0) - 0xFEE0); })
+    .trim();
   var m = s.match(/^\s*(\d+)\s*(.*)$/);
   if (m) return { storeNo: Number(m[1]), storeName: (m[2] || '').trim() };
   return { storeNo: '', storeName: s };
 }
+
+// 名前の途中に市/町/村/郡を含み、単純な正規表現では途中で切れてしまう市名
+var CITY_EXCEPTIONS = [
+  '四日市市', '廿日市市', '野々市市', '十日町市', '大和郡山市',
+  '武蔵村山市', '東村山市', '田村市', '大町市', '蒲郡市',
+  '小郡市', '大村市', '羽村市', '村上市', '郡山市'
+];
 
 /** 住所 → {pref:都道府県, city:市区町村} */
 function splitAddress_(address) {
@@ -151,10 +196,13 @@ function splitAddress_(address) {
   var mp = s.match(/^(東京都|北海道|京都府|大阪府|.{2,3}県)/);
   var pref = mp ? mp[1] : '';
   var rest = mp ? s.slice(pref.length) : s;
-  // 郡部（例: 邑楽郡大泉町）は「〇〇郡」を市町村とする（営業部シートの表記に合わせる）。
-  // 「郡山市」のような地名は後ろに町村が続かないので誤爆しない。
+  // 例外市名(十日町市・蒲郡市など)を最優先で確認
+  for (var i = 0; i < CITY_EXCEPTIONS.length; i++) {
+    if (rest.indexOf(CITY_EXCEPTIONS[i]) === 0) return { pref: pref, city: CITY_EXCEPTIONS[i] };
+  }
+  // 郡部(例: 邑楽郡大泉町)は「〇〇郡」を市町村とする(営業部シートの表記に合わせる)
   var mg = rest.match(/^(.+?郡)(?=.+?[町村])/);
-  var mc = rest.match(/^(.+?[市区町村])/); // 政令市は「市」で止まる（横浜市／京都市／葛飾区）
+  var mc = rest.match(/^(.+?[市区町村])/); // 政令市は「市」で止まる(横浜市/京都市/葛飾区)
   var city = mg ? mg[1] : (mc ? mc[1] : '');
   return { pref: pref, city: city };
 }
@@ -172,36 +220,44 @@ function lookupMaster_(ss, storeNo, storeName) {
   for (var r = MASTER.firstDataRow - 1; r < vals.length; r++) {
     var row = vals[r];
     var no = row[MASTER.col.storeNo - 1];
-    if (storeNo !== '' && no !== '' && Number(no) === Number(storeNo)) {
-      return { dept: clean_(row[MASTER.col.dept - 1]), manager: stripYear_(row[MASTER.col.manager - 1]) };
-    }
+    if (storeNo !== '' && no !== '' && Number(no) === Number(storeNo)) return masterHit_(row);
     if (!byName && targetName && normName_(row[MASTER.col.storeName - 1]) === targetName) {
-      byName = { dept: clean_(row[MASTER.col.dept - 1]), manager: stripYear_(row[MASTER.col.manager - 1]) };
+      byName = masterHit_(row);
     }
   }
-  return byName; // 店番一致が無ければ店名一致（緩め）を返す
+  return byName; // 店番一致が無ければ店名一致(表記ゆれ吸収)を返す
 }
 
-/** フロー一覧で同じ店番の行を探す（見つからなければ -1） */
-function findRowByStoreNo_(flow, storeNo) {
-  if (storeNo === '' || storeNo === null || storeNo === undefined) return -1;
+function masterHit_(row) {
+  return {
+    dept: clean_(row[MASTER.col.dept - 1]),
+    manager: stripYear_(row[MASTER.col.manager - 1])
+  };
+}
+
+/**
+ * フロー一覧で対象行を探す(見つからなければ -1)。
+ * 店番一致を最優先、無ければ店名一致(店番未採番の新店でも同じ行を更新できる)。
+ */
+function findTargetRow_(flow, storeNo, storeName) {
   var last = flow.getLastRow();
   if (last < FLOW.firstDataRow) return -1;
-  var col = flow.getRange(FLOW.firstDataRow, FLOW.col.storeNo, last - FLOW.firstDataRow + 1, 1).getValues();
-  for (var i = 0; i < col.length; i++) {
-    var v = col[i][0];
-    if (v !== '' && v !== null && Number(v) === Number(storeNo)) {
-      return FLOW.firstDataRow + i;
-    }
+  var vals = flow.getRange(FLOW.firstDataRow, 1, last - FLOW.firstDataRow + 1, 2).getValues();
+  var target = normName_(storeName);
+  var byName = -1;
+  for (var i = 0; i < vals.length; i++) {
+    var no = vals[i][0];
+    if (storeNo !== '' && no !== '' && Number(no) === Number(storeNo)) return FLOW.firstDataRow + i;
+    if (byName < 0 && target && normName_(vals[i][1]) === target) byName = FLOW.firstDataRow + i;
   }
-  return -1;
+  return byName;
 }
 
-/** 店名の表記ゆれ吸収：空白除去＋「が/ヶ/ヵ/ケ」を統一 */
+/** 店名の表記ゆれ吸収：空白除去＋「が/ヶ/ヵ」を「ケ」に統一 */
 function normName_(x) {
   return String(x || '')
     .replace(/[\s　]/g, '')
-    .replace(/[がヶヵケ]/g, 'ケ');
+    .replace(/[がヶヵ]/g, 'ケ');
 }
 
 /** 「貴島 遼介'20」→「貴島 遼介」 */
@@ -211,4 +267,11 @@ function stripYear_(x) {
 
 function clean_(x) {
   return (x === null || x === undefined) ? '' : String(x).trim();
+}
+
+/** 画面右下のお知らせ表示(失敗しても本体処理には影響させない) */
+function toast_(msg) {
+  try {
+    SpreadsheetApp.getActiveSpreadsheet().toast(msg, '新店フロー', 8);
+  } catch (e) { /* トーストが出せない環境では無視 */ }
 }
