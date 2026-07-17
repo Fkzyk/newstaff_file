@@ -28,7 +28,8 @@
  *       時給調査依頼 = 見積取得 = 稟議申請依頼の3週間前 / 面接会場 = その1週間後
  *   - 期日チェック: 期限超過=赤い太字+薄赤背景、3日以内=赤い字+薄黄背景。
  *     シートを開いたとき・メニュー・毎朝のリマインドメール(任意)で確認できる。
- *     済んだ項目はセルをグレーにするか取り消し線を引けば対象外になる
+ *     済んだ日程はセルを選んでメニュー「✓ 完了にする」→背景がうすいグレーになり
+ *     対象外(文字は黒のまま読める)。手動のグレー塗り・取り消し線も対象外扱い
  *   - 結果は画面右下のお知らせ(トースト)で毎回表示。エラーも表示する
  */
 
@@ -410,7 +411,7 @@ function refreshAttention_(flow) {
 }
 
 /**
- * メニュー用: 選択中の日程セルを「完了」にする(グレー+取り消し線)。
+ * メニュー用: 選択中の日程セルを「完了」にする(背景うすいグレー。文字は黒のまま)。
  * 完了にすると赤字・リマインドの対象から外れる。
  */
 function markScheduleDone() { applyDoneMark_(true); }
@@ -439,8 +440,10 @@ function applyDoneMark_(done) {
     if (r2 < r1 || c2 < c1) continue;
     var target = sheet.getRange(r1, c1, r2 - r1 + 1, c2 - c1 + 1);
     if (done) {
-      target.setFontColor('#999999').setFontLine('line-through')
-            .setBackground('#efefef').setFontWeight('normal');
+      // 完了=背景をうすいグレーにするだけ。文字は黒のまま残す
+      // (完了後も日付はメール作成などで使うため、読みやすさを保つ)
+      target.setBackground('#efefef').setFontColor(null)
+            .setFontLine('none').setFontWeight('normal');
     } else {
       target.setFontColor(null).setFontLine('none')
             .setBackground(null).setFontWeight('normal');
@@ -455,7 +458,7 @@ function applyDoneMark_(done) {
     return;
   }
   if (!done) refreshAttention_(sheet); // 取り消した日程がまだ危険なら赤字に戻す
-  toast_(done ? '✓ ' + count + '件の日程を完了にしました(グレー+取り消し線)'
+  toast_(done ? '✓ ' + count + '件の日程を完了にしました(背景うすいグレー・文字はそのまま)'
               : count + '件の完了を取り消しました');
 }
 
@@ -480,7 +483,7 @@ function dailyReminder() {
   MailApp.sendEmail(email,
     '【新店フロー】日程リマインド(' + items.length + '件)',
     '新店把握シートで、期限が近い・過ぎている日程があります。\n\n・' + items.join('\n・') +
-    '\n\n対応が済んだ項目は、セルをグレーにするか取り消し線を引くとリマインド対象から外れます。\n' + ss.getUrl());
+    '\n\n対応が済んだ日程は、そのセルを選んでメニュー「新店フロー」→「✓ 選択した日程を完了にする」を押すとリマインド対象から外れます。\n' + ss.getUrl());
 }
 
 /** メニュー用: 毎朝8時台のリマインドメールを有効にする */
