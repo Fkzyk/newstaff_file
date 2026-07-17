@@ -148,20 +148,20 @@ function onOpen() {
   try {
     var flow = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_FLOW);
     if (flow) {
-      var healedSched = 0, healedTel = 0;
+      var healedSched = 0, healedTel = 0, healedDept = 0;
       var lastRow = flow.getLastRow();
       if (lastRow >= FLOW.firstDataRow) {
         healedSched = fillSchedules_(flow, FLOW.firstDataRow, lastRow);
+        healedDept = fillDeptManagers_(flow, FLOW.firstDataRow, lastRow);
         healedTel = fillInterviewerPhones_(flow, FLOW.firstDataRow, lastRow, false, true);
       }
       var items = refreshAttention_(flow);
       var msgs = [];
-      if (healedSched || healedTel) {
-        msgs.push('取り残しを自動補完: ' +
-          (healedSched ? '日程' + healedSched + 'セル' : '') +
-          (healedSched && healedTel ? '・' : '') +
-          (healedTel ? '電話番号' + healedTel + '件' : ''));
-      }
+      var healedParts = [];
+      if (healedSched) healedParts.push('日程' + healedSched + 'セル');
+      if (healedDept) healedParts.push('営業部・部長' + healedDept + 'セル');
+      if (healedTel) healedParts.push('電話番号' + healedTel + '件');
+      if (healedParts.length) msgs.push('取り残しを自動補完: ' + healedParts.join('・'));
       if (items.length) {
         msgs.push('日程の要注意が' + items.length + '件あります(赤い字=期限超過または3日以内)。' + items[0] + (items.length > 1 ? ' ほか' : ''));
       }
@@ -314,6 +314,31 @@ function scheduleFromHandover_(handover) {
 }
 
 /**
+ * 営業部(K)・営業部長(N)が空欄の行を、営業部シートから照合して補完する。
+ * 空欄のセルだけ埋める(手入力は変更しない)。埋めたセル数を返す。
+ */
+function fillDeptManagers_(flow, startRow, endRow) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var n = endRow - startRow + 1;
+  var keys = flow.getRange(startRow, 1, n, 2).getValues(); // A店番, B店名
+  var width = FLOW.col.manager - FLOW.col.dept + 1;        // K〜N
+  var knRange = flow.getRange(startRow, FLOW.col.dept, n, width);
+  var kn = knRange.getValues();
+  var mgrIdx = FLOW.col.manager - FLOW.col.dept;
+  var filled = 0;
+  for (var i = 0; i < n; i++) {
+    if (keys[i][0] === '' && clean_(keys[i][1]) === '') continue;       // 店番も店名も無い行
+    if (kn[i][0] !== '' && kn[i][mgrIdx] !== '') continue;              // 両方入力済み
+    var hit = lookupMaster_(ss, keys[i][0], keys[i][1]);
+    if (!hit) continue;
+    if (kn[i][0] === '' && hit.dept)        { kn[i][0] = hit.dept; filled++; }
+    if (kn[i][mgrIdx] === '' && hit.manager) { kn[i][mgrIdx] = hit.manager; filled++; }
+  }
+  if (filled) knRange.setValues(kn);
+  return filled;
+}
+
+/**
  * メニュー用: 期日チェックを実行して色を最新化し、結果をお知らせする。
  */
 function checkDeadlines() {
@@ -445,6 +470,7 @@ function dailyReminder() {
   // 取り残しの自己修復(onEditが効かなかった行への追いつき)をここでも行う
   if (flow.getLastRow() >= FLOW.firstDataRow) {
     fillSchedules_(flow, FLOW.firstDataRow, flow.getLastRow());
+    fillDeptManagers_(flow, FLOW.firstDataRow, flow.getLastRow());
     fillInterviewerPhones_(flow, FLOW.firstDataRow, flow.getLastRow(), false, true);
   }
   var items = refreshAttention_(flow);
