@@ -21,6 +21,14 @@
  *   - フローの T列(面接担当者)を入力・変更すると、U列(担当者電話番号)を
  *     「連絡先」シート(Googleコンタクトのエクスポート)から自動入力する。
  *     「長屋（1週間）→石井」のような複数名・注釈付きにも対応
+ *   - 採用日程(C〜I列)は引渡日から逆算して空欄セルだけ自動入力する。
+ *     法則(児玉・横浜霧ケ丘の実績と一致):
+ *       稟議申請依頼 = 引渡日の60日前以降の直近月曜
+ *       媒体に求人依頼/掲載開始/面接開始 = そこから1週間刻み
+ *       時給調査依頼 = 見積取得 = 稟議申請依頼の3週間前 / 面接会場 = その1週間後
+ *   - 期日チェック: 期限超過=赤い太字+薄赤背景、3日以内=赤い字+薄黄背景。
+ *     シートを開いたとき・メニュー・毎朝のリマインドメール(任意)で確認できる。
+ *     済んだ項目はセルをグレーにするか取り消し線を引けば対象外になる
  *   - 結果は画面右下のお知らせ(トースト)で毎回表示。エラーも表示する
  */
 
@@ -74,6 +82,18 @@ var CONTACTS = {
   col: { first: 1, last: 3, phone1: 25, phone2: 27 } // A=名, C=姓, Y=電話1, AA=電話2
 };
 
+// ===== 採用日程(C〜I列)の自動入力と期日チェック =====
+var SCHEDULE = {
+  firstCol: 3, // C 時給調査依頼
+  lastCol:  9, // I 面接開始
+  names: ['時給調査依頼', '見積取得', '面接会場', '稟議申請依頼', '媒体に求人依頼', '掲載開始', '面接開始'],
+  attentionDays: 3,            // この日数以内に迫った期日を「危険」とする
+  fontDanger:  '#cc0000',      // 危険な期日は赤い字
+  bgOverdue:   '#f4cccc',      // 期限超過の背景(薄赤)
+  bgSoon:      '#fff2cc',      // 3日以内の背景(薄黄)
+  doneGreys: ['#cccccc', '#d9d9d9', '#efefef', '#f3f3f3', '#b7b7b7', '#999999', '#666666']
+};
+
 /**
  * 貼付シートが編集されたら自動実行(シンプルトリガー)。
  */
@@ -88,13 +108,18 @@ function onEdit(e) {
       // それ以外の単発修正は「空欄では消さない」モード。
       syncNewStore(rangeContains_(e.range, SRC.storeNoName));
     } else if (sheetName === SHEET_FLOW) {
-      // T列(面接担当者)が編集されたら、その行のU列に電話番号を自動入力
-      var colT = FLOW.col.interviewer;
-      if (e.range.getColumn() > colT || e.range.getLastColumn() < colT) return;
       var startRow = Math.max(e.range.getRow(), FLOW.firstDataRow);
       var endRow = e.range.getLastRow();
       if (endRow < startRow) return;
-      fillInterviewerPhones_(e.range.getSheet(), startRow, endRow, true);
+      // T列(面接担当者)が編集されたら、その行のU列に電話番号を自動入力
+      if (colIn_(e.range, FLOW.col.interviewer)) {
+        fillInterviewerPhones_(e.range.getSheet(), startRow, endRow, true);
+      }
+      // O列(引渡日)が編集されたら、その行の空欄日程を逆算入力
+      if (colIn_(e.range, FLOW.col.handover)) {
+        var filled = fillSchedules_(e.range.getSheet(), startRow, endRow);
+        if (filled) toast_('引渡日から日程を' + filled + 'セル入力しました');
+      }
     }
   } catch (err) {
     toast_('自動反映でエラーが起きました: ' + err);
@@ -109,7 +134,22 @@ function onOpen() {
     .createMenu('新店フロー')
     .addItem('貼付フォームを今すぐ取り込む', 'syncNewStore')
     .addItem('面接担当者の電話番号を一括入力', 'fillAllInterviewerPhones')
+    .addItem('日程を自動入力(引渡日から逆算)', 'fillAllSchedules')
+    .addItem('期限チェックを今すぐ実行', 'checkDeadlines')
+    .addSeparator()
+    .addItem('毎朝のリマインドメールを有効にする', 'enableDailyReminder')
+    .addItem('リマインドメールを止める', 'disableDailyReminder')
     .addToUi();
+  // シートを開いたときに期日の色を最新化し、要注意があればお知らせ
+  try {
+    var flow = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_FLOW);
+    if (flow) {
+      var items = refreshAttention_(flow);
+      if (items.length) {
+        toast_('日程の要注意が' + items.length + '件あります(赤い字=期限超過または3日以内)。' + items[0] + (items.length > 1 ? ' ほか' : ''));
+      }
+    }
+  } catch (err) { /* 開くのを妨げない */ }
 }
 
 /**
@@ -189,9 +229,177 @@ function syncNewStore(mirror) {
   put(FLOW.col.address,   address,   mirror);
   flow.getRange(targetRow, FLOW.col.dept, 1, ks.length).setValues([ks]);
 
+  // 引渡日が分かっていれば、採用日程(C〜I)の空欄セルを逆算で埋める
+  if (handover instanceof Date) fillSchedules_(flow, targetRow, targetRow);
+
   var label = (parsed.storeNo !== '' ? parsed.storeNo + ' ' : '') + parsed.storeName;
   toast_((isNew ? '新しい行を追加しました' : '既存の行を更新しました') + ': ' + label + '(' + targetRow + '行目)' +
          (master ? '' : ' ※営業部が見つからず空欄です'));
+}
+
+// ============ 採用日程の逆算入力と期日チェック ============
+
+/**
+ * メニュー用: フロー一覧全行の採用日程(C〜I)を引渡日から逆算して入力する。
+ * 空欄のセルだけ埋める(手で入れた日付・既存の日付は変更しない)。
+ */
+function fillAllSchedules() {
+  var flow = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_FLOW);
+  if (!flow) { toast_('シート「' + SHEET_FLOW + '」が見つかりません。'); return; }
+  var last = flow.getLastRow();
+  if (last < FLOW.firstDataRow) { toast_('フロー一覧にデータ行がありません。'); return; }
+  var filled = fillSchedules_(flow, FLOW.firstDataRow, last);
+  toast_(filled ? '日程を' + filled + 'セル入力しました(入力済みの日付は変更していません)'
+                : '入力できる空欄がありません(引渡日が入っていて、面接開始がまだ先の行の空欄だけ埋めます)');
+  refreshAttention_(flow);
+}
+
+/**
+ * startRow〜endRowの各行について、引渡日(O列)から日程を逆算し
+ * C〜I列の「空欄セルだけ」埋める。埋めたセル数を返す。
+ * すでに面接開始予定日を過ぎている行(対応済みの古い店)は触らない。
+ */
+function fillSchedules_(flow, startRow, endRow) {
+  var n = endRow - startRow + 1;
+  var width = SCHEDULE.lastCol - SCHEDULE.firstCol + 1;
+  var range = flow.getRange(startRow, SCHEDULE.firstCol, n, width);
+  var grid = range.getValues();
+  var handovers = flow.getRange(startRow, FLOW.col.handover, n, 1).getValues();
+  var today = today_();
+  var filled = 0;
+  for (var i = 0; i < n; i++) {
+    var o = handovers[i][0];
+    if (!(o instanceof Date)) continue;
+    var plan = scheduleFromHandover_(o);
+    if (plan[plan.length - 1].getTime() < today.getTime()) continue; // 面接開始が過去=昔の店は触らない
+    for (var j = 0; j < width; j++) {
+      if (grid[i][j] === '' || grid[i][j] === null) { grid[i][j] = plan[j]; filled++; }
+    }
+  }
+  if (filled) range.setValues(grid);
+  return filled;
+}
+
+/**
+ * 引渡日から日程を逆算する。児玉・横浜霧ケ丘の実績と一致する法則:
+ *   稟議申請依頼 = 引渡日の60日前以降の直近月曜
+ *   媒体に求人依頼 = +1週 / 掲載開始 = +2週 / 面接開始 = +3週(≒グランドOPの2か月前)
+ *   時給調査依頼 = 見積取得 = 稟議申請依頼の3週間前 / 面接会場 = その1週間後
+ * 戻り値: [C,D,E,F,G,H,I] の7つの日付
+ */
+function scheduleFromHandover_(handover) {
+  var f = nextMonday_(addDays_(handover, -60)); // 稟議申請依頼
+  var c = addDays_(f, -21);                     // 時給調査依頼=見積取得
+  return [c, c, addDays_(c, 7), f, addDays_(f, 7), addDays_(f, 14), addDays_(f, 21)];
+}
+
+/**
+ * メニュー用: 期日チェックを実行して色を最新化し、結果をお知らせする。
+ */
+function checkDeadlines() {
+  var flow = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_FLOW);
+  if (!flow) { toast_('シート「' + SHEET_FLOW + '」が見つかりません。'); return; }
+  var items = refreshAttention_(flow);
+  if (!items.length) { toast_('期限が近い・過ぎている日程はありません。'); return; }
+  toast_('要注意 ' + items.length + '件: ' + items.slice(0, 3).join(' / ') + (items.length > 3 ? ' ほか' : ''));
+}
+
+/**
+ * C〜I列の期日を今日と比べて色を付け直す。
+ *   期限超過 = 赤い太字 + 薄赤背景 / 3日以内 = 赤い字 + 薄黄背景 / それ以外 = 通常に戻す
+ * 対象外: 日付でないセル、グレー背景・グレー字・取り消し線のセル(=対応済み)、
+ *         グランドOPが過ぎた行(開店済みの店)。
+ * 戻り値: 要注意項目の一覧(リマインドメール・お知らせ用)
+ */
+function refreshAttention_(flow) {
+  var last = flow.getLastRow();
+  if (last < FLOW.firstDataRow) return [];
+  var n = last - FLOW.firstDataRow + 1;
+  var width = SCHEDULE.lastCol - SCHEDULE.firstCol + 1;
+  var range = flow.getRange(FLOW.firstDataRow, SCHEDULE.firstCol, n, width);
+  var vals = range.getValues();
+  var bgs = range.getBackgrounds();
+  var fonts = range.getFontColors();
+  var weights = range.getFontWeights();
+  var lines = range.getFontLines();
+  var meta = flow.getRange(FLOW.firstDataRow, 1, n, FLOW.col.grandOpen).getValues();
+
+  var today = today_();
+  var soonLimit = addDays_(today, SCHEDULE.attentionDays);
+  var items = [];
+  for (var i = 0; i < n; i++) {
+    var op = meta[i][FLOW.col.grandOpen - 1];
+    var rowClosed = (op instanceof Date) && op.getTime() < today.getTime(); // 開店済み
+    var label = (clean_(meta[i][0]) ? clean_(meta[i][0]) + ' ' : '') + clean_(meta[i][1]);
+    for (var j = 0; j < width; j++) {
+      var bg = String(bgs[i][j] || '').toLowerCase();
+      var fc = String(fonts[i][j] || '').toLowerCase();
+      var oursBg = (bg === SCHEDULE.bgOverdue || bg === SCHEDULE.bgSoon);
+      var oursFont = (fc === SCHEDULE.fontDanger);
+      var reset = function () { // 通常表示に戻す(自分が付けた色だけ)
+        if (oursBg) bgs[i][j] = null;
+        if (oursFont) { fonts[i][j] = null; weights[i][j] = 'normal'; }
+      };
+      var v = vals[i][j];
+      if (!(v instanceof Date) || rowClosed) { reset(); continue; }
+      var done = lines[i][j] === 'line-through' || SCHEDULE.doneGreys.indexOf(bg) >= 0 ||
+                 (fc && SCHEDULE.doneGreys.indexOf(fc) >= 0);
+      if (done) continue; // 対応済み(グレー/取り消し線)は触らない
+      var t = new Date(v.getTime()); t.setHours(0, 0, 0, 0);
+      if (t.getTime() < today.getTime()) {
+        bgs[i][j] = SCHEDULE.bgOverdue; fonts[i][j] = SCHEDULE.fontDanger; weights[i][j] = 'bold';
+        items.push(label + ': ' + SCHEDULE.names[j] + ' ' + fmtDate_(t) + '【期限超過】');
+      } else if (t.getTime() <= soonLimit.getTime()) {
+        bgs[i][j] = SCHEDULE.bgSoon; fonts[i][j] = SCHEDULE.fontDanger; weights[i][j] = 'normal';
+        var left = Math.round((t.getTime() - today.getTime()) / 86400000);
+        items.push(label + ': ' + SCHEDULE.names[j] + ' ' + fmtDate_(t) + '(' + (left === 0 ? '今日' : 'あと' + left + '日') + ')');
+      } else {
+        reset();
+      }
+    }
+  }
+  range.setBackgrounds(bgs);
+  range.setFontColors(fonts);
+  range.setFontWeights(weights);
+  return items;
+}
+
+/**
+ * 毎朝の自動リマインド(時間トリガーから実行)。
+ * 要注意の日程がある日だけ、自分宛にまとめメールを送る。
+ */
+function dailyReminder() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var flow = ss.getSheetByName(SHEET_FLOW);
+  if (!flow) return;
+  var items = refreshAttention_(flow);
+  if (!items.length) return;
+  var email = Session.getEffectiveUser().getEmail();
+  if (!email) return;
+  MailApp.sendEmail(email,
+    '【新店フロー】日程リマインド(' + items.length + '件)',
+    '新店把握シートで、期限が近い・過ぎている日程があります。\n\n・' + items.join('\n・') +
+    '\n\n対応が済んだ項目は、セルをグレーにするか取り消し線を引くとリマインド対象から外れます。\n' + ss.getUrl());
+}
+
+/** メニュー用: 毎朝8時台のリマインドメールを有効にする */
+function enableDailyReminder() {
+  deleteReminderTriggers_();
+  ScriptApp.newTrigger('dailyReminder').timeBased().everyDays(1).atHour(8).create();
+  toast_('毎朝8時台のリマインドメールを有効にしました(要注意の日程がある日だけ届きます)');
+}
+
+/** メニュー用: リマインドメールを止める */
+function disableDailyReminder() {
+  deleteReminderTriggers_();
+  toast_('リマインドメールを止めました');
+}
+
+function deleteReminderTriggers_() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'dailyReminder') ScriptApp.deleteTrigger(triggers[i]);
+  }
 }
 
 // ============ 面接担当者の電話番号(連絡先シートから) ============
@@ -302,6 +510,36 @@ function loadContacts_() {
 }
 
 // ================= ヘルパー =================
+
+/** 編集範囲がcol列(番号)を含むか */
+function colIn_(range, col) {
+  return range.getColumn() <= col && range.getLastColumn() >= col;
+}
+
+/** 日付にn日足す(引く) */
+function addDays_(d, n) {
+  var x = new Date(d.getTime());
+  x.setDate(x.getDate() + n);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+/** その日以降の直近の月曜(その日が月曜ならその日) */
+function nextMonday_(d) {
+  return addDays_(d, (8 - d.getDay()) % 7);
+}
+
+/** 今日の0時 */
+function today_() {
+  var t = new Date();
+  t.setHours(0, 0, 0, 0);
+  return t;
+}
+
+/** 日付を「7/20」形式にする */
+function fmtDate_(d) {
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'M/d');
+}
 
 /** 編集範囲がa1セルを含むか */
 function rangeContains_(range, a1) {
