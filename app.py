@@ -336,8 +336,12 @@ with tab_docs:
         cohorts[key] = base
 
     st.divider()
-    run = st.button(f"🚀 {len(selected)}名分の書類とメールを作成する", type="primary",
-                    disabled=not selected, width="stretch")
+    st.markdown("#### これ1つで全部")
+    st.caption("ボタンを押すと ①全員の書類を作成 → ②全員分のGmail作成画面(宛先・CC・件名・"
+               "本文入り)をまとめて開く → ③保存先フォルダを開く まで一気に行います。"
+               "残りは各Gmailに本文記載のPDFをドラッグして送信するだけです。")
+    run = st.button(f"🚀 {len(selected)}名分を作成してGmailをまとめて開く",
+                    type="primary", disabled=not selected, width="stretch")
     st.caption(f"保存先: {out_dir}")
 
     if run:
@@ -362,16 +366,31 @@ with tab_docs:
                 errors.append((p, str(e)))
             bar.progress((i + 1) / len(selected))
         status.empty()
+        # 全員分のGmail作成画面をまとめて開く(添付だけは各自ドラッグ)
+        opened = 0
+        for p, folder, notes in results:
+            try:
+                subject, body, atts = build_mail_content(
+                    folder, p, company, subject_tpl, body_tpl, shataku_text)
+                webbrowser.open(gmail_compose_url(
+                    p.email, subject, body, cc=defaults.ANNAI_CC,
+                    account=gmail_account))
+                opened += 1
+            except Exception:
+                pass
         if results:
-            st.success(f"✅ {len(results)}名分を作成しました")
+            open_folder(out_dir)
+            st.success(f"✅ {len(results)}名分を作成し、Gmailを{opened}件開きました。")
+            st.info("次にやること: 開いた各Gmailに、保存先フォルダから本文の"
+                    "「■添付書類」のPDFをドラッグ&ドロップ → 送信(または送信予約)。"
+                    "添付と送信ボタンだけは仕様上どうしても手動です。")
             for p, folder, notes in results:
-                st.write(f"- **{p.name}**{'(社宅案内あり)' if p.shataku else ''}")
+                st.write(f"- **{p.name}**{'(社宅案内あり)' if p.shataku else ''} "
+                         f"→ `{folder.name}`")
                 for n in notes:
                     st.warning(f"{p.name}: {n}")
         for p, msg in errors:
             st.error(f"❌ {p.name}: {msg}")
-        if results:
-            st.info("次は「② 入社案内メールを送る」タブへ。")
 
     with st.expander("♻️ 作った書類を直したいとき(PDFとメールの作り直し)"):
         st.caption("フォルダ内の Word / Excel を直接修正して保存 → 下のボタンで、"
@@ -398,12 +417,27 @@ with tab_mail:
     st.subheader("入社案内メールを送る")
     st.caption(f"To=本人・CC=人事2名で、Gmail({gmail_account})の作成画面が"
                "宛先・件名・本文入りで開きます。添付はGmailの仕様で自動では付かないため、"
-               "同時に開くフォルダから本文の「■添付書類」のPDFをドラッグしてください。")
+               "保存先フォルダから本文の「■添付書類」のPDFをドラッグしてください。"
+               "(「①書類を作る」の一括ボタンでも全員分のGmailが開きます)")
     mailable = [p for p in people if not p.warnings and p.nyusha_date
                 and person_dir(out_dir, p).exists()]
     if not mailable:
         st.info("まだ書類を作成した方がいません。「① 書類を作る」で作成すると、"
                 "ここに送信ボタンが並びます。")
+    if mailable:
+        if st.button(f"📧 {len(mailable)}名分のGmailをまとめて開く",
+                     type="primary", width="stretch"):
+            for p in mailable:
+                folder = person_dir(out_dir, p)
+                subject, body, _a = build_mail_content(
+                    folder, p, company, subject_tpl, body_tpl, shataku_text)
+                webbrowser.open(gmail_compose_url(p.email, subject, body,
+                                                  cc=defaults.ANNAI_CC,
+                                                  account=gmail_account))
+            open_folder(out_dir)
+            st.success(f"Gmailを{len(mailable)}件開きました。保存先フォルダから"
+                       "PDFをドラッグして添付し、送信してください。")
+        st.caption("個別に開き直したいときは下のボタンをどうぞ。")
     for p in mailable:
         with st.container(border=True):
             c1, c2 = st.columns([3, 2])
