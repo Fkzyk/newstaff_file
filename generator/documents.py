@@ -67,12 +67,16 @@ def _to_yen(value) -> int:
         return 0
     if isinstance(value, str):
         value = value.replace(",", "").replace("円", "").strip()
-    return int(float(value))
+    try:
+        return int(float(value))
+    except (ValueError, TypeError):
+        raise ValueError(f"給与テーブルの金額を数値として読めません: {value!r}")
 
 
 def _load_salary_table() -> tuple[dict, dict]:
     """給与テーブルシートから 等級->給与 と 備考文言 を読み込む。"""
-    wb = openpyxl.load_workbook(KEIYAKU_TEMPLATE, data_only=False)
+    # data_only=True: 数式ではなく計算済みの値を読む(数式文字列で壊れないように)
+    wb = openpyxl.load_workbook(KEIYAKU_TEMPLATE, data_only=True)
     ws = wb["給与テーブル"]
     salary = {}
     for row in ws.iter_rows(min_row=3):

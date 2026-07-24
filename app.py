@@ -214,13 +214,18 @@ if not people:
     st.warning("新入社員の行が見つかりませんでした(2行目ヘッダー・3行目以降データの前提)。")
     st.stop()
 
-grades_ok, grade_lines = check_grades(people)
+grades_error = None
+try:
+    grades_ok, grade_lines = check_grades(people)
+except Exception as e:
+    grades_ok, grade_lines, grades_error = True, [], str(e)
 future = [p for p in people if p.nyusha_date and p.nyusha_date >= today]
 
 # ===== ステータス表示(ひと目で状態が分かる) =====
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("名簿(読込済)", f"{len(people)}名")
-m2.metric("等級・月給", "一致 ✅" if grades_ok else "不一致 ⚠️")
+m2.metric("等級・月給", "確認できず" if grades_error
+          else "一致 ✅" if grades_ok else "不一致 ⚠️")
 m3.metric("これから入社", f"{len(future)}名")
 next_jobkan = None
 for d in sorted({p.nyusha_date for p in people if p.nyusha_date and p.email}):
@@ -234,7 +239,9 @@ if next_jobkan:
 else:
     m4.metric("次のジョブカン送信", "—")
 
-if not grades_ok:
+if grades_error:
+    st.warning(f"等級・月給チェックを実行できませんでした(給与テーブルをご確認ください): {grades_error}")
+elif not grades_ok:
     st.error("❌ 等級・月給が不一致です。作成前にシートをご確認ください。")
 with st.expander("等級・月給チェックの明細を見る"):
     for line in grade_lines:
@@ -471,23 +478,27 @@ with tab_mail:
         if st.button(f"📧 {len(mailable)}名分のGmailをまとめて開く",
                      type="primary", width="stretch"):
             opened, skipped = 0, []
-            for p in mailable:
-                folder = person_dir(out_dir, p)
-                subject, body, atts = build_mail_content(
-                    folder, p, company, subject_tpl, body_tpl, shataku_text)
-                if not atts:
-                    skipped.append(p.name)
-                    continue
-                webbrowser.open(gmail_compose_url(p.email, subject, body,
-                                                  cc=defaults.ANNAI_CC,
-                                                  account=gmail_account))
-                opened += 1
-            open_folder(out_dir)
-            st.success(f"Gmailを{opened}件開きました。保存先フォルダから"
-                       "PDFをドラッグして添付し、送信してください。")
-            if skipped:
-                st.error("⚠️ PDFが無いためメールを開かなかった方: "
-                         + "、".join(skipped) + "(先にPDFを作成してください)")
+            try:
+                for p in mailable:
+                    folder = person_dir(out_dir, p)
+                    subject, body, atts = build_mail_content(
+                        folder, p, company, subject_tpl, body_tpl, shataku_text)
+                    if not atts:
+                        skipped.append(p.name)
+                        continue
+                    webbrowser.open(gmail_compose_url(p.email, subject, body,
+                                                      cc=defaults.ANNAI_CC,
+                                                      account=gmail_account))
+                    opened += 1
+                open_folder(out_dir)
+                st.success(f"Gmailを{opened}件開きました。保存先フォルダから"
+                           "PDFをドラッグして添付し、送信してください。")
+                if skipped:
+                    st.error("⚠️ PDFが無いためメールを開かなかった方: "
+                             + "、".join(skipped) + "(先にPDFを作成してください)")
+            except (KeyError, ValueError, IndexError) as e:
+                st.error("メール文面のテンプレートに誤りがあります(サイドバーの"
+                         f"「メール文面」をご確認ください)。詳細: {e}")
         st.caption("個別に開き直したいときは下のボタンをどうぞ。")
     for p in mailable:
         with st.container(border=True):
@@ -499,18 +510,21 @@ with tab_mail:
             c1.caption(f"To: {p.email} / CC: {'、'.join(defaults.ANNAI_CC)}")
             if c2.button("📧 Gmailで開く", key=f"gmail{p.row}", type="primary",
                          width="stretch"):
-                folder = person_dir(out_dir, p)
-                subject, body, attachments = build_mail_content(
-                    folder, p, company, subject_tpl, body_tpl, shataku_text)
-                if not attachments:
-                    c2.error("PDFがまだありません。先にPDFを作成してください。")
-                else:
-                    webbrowser.open(gmail_compose_url(p.email, subject, body,
-                                                      cc=defaults.ANNAI_CC,
-                                                      account=gmail_account))
-                    open_folder(folder)
-                    c2.success("Gmailとフォルダを開きました。")
-                    c2.caption("添付: " + "、".join(a.name for a in attachments))
+                try:
+                    folder = person_dir(out_dir, p)
+                    subject, body, attachments = build_mail_content(
+                        folder, p, company, subject_tpl, body_tpl, shataku_text)
+                    if not attachments:
+                        c2.error("PDFがまだありません。先にPDFを作成してください。")
+                    else:
+                        webbrowser.open(gmail_compose_url(p.email, subject, body,
+                                                          cc=defaults.ANNAI_CC,
+                                                          account=gmail_account))
+                        open_folder(folder)
+                        c2.success("Gmailとフォルダを開きました。")
+                        c2.caption("添付: " + "、".join(a.name for a in attachments))
+                except (KeyError, ValueError, IndexError) as e:
+                    c2.error(f"メール文面のテンプレートに誤りがあります。詳細: {e}")
 
 # =========================================================== ③ ジョブカン
 with tab_jobkan:

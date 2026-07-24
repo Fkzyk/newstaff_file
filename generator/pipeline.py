@@ -297,6 +297,12 @@ def check_grades(people: list[Person]) -> tuple[bool, list[str]]:
 JOBKAN_MANUAL = documents.TEMPLATES / "jobkan_workflow.pdf"
 
 
+def _ics_escape(text: str) -> str:
+    """iCalendar(.ics)のテキスト値をエスケープする。"""
+    return (text.replace("\\", "\\\\").replace(";", "\\;")
+            .replace(",", "\\,").replace("\n", "\\n"))
+
+
 def build_jobkan_reminders(people: list[Person], out_dir: Path) -> tuple[Path, list[str]]:
     """今後の入社月ごとに、ジョブカン案内メールの送信予定を
     カレンダー(.ics)に登録できるファイルを作る。当日に通知が出る。
@@ -341,8 +347,8 @@ def build_jobkan_reminders(people: list[Person], out_dir: Path) -> tuple[Path, l
             f"UID:jobkan-{d:%Y%m%d}-{i}@nyusha-app",
             f"DTSTART;VALUE=DATE:{d:%Y%m%d}",
             f"DTEND;VALUE=DATE:{end:%Y%m%d}",
-            f"SUMMARY:{summary}",
-            f"DESCRIPTION:{desc}",
+            f"SUMMARY:{_ics_escape(summary)}",
+            f"DESCRIPTION:{_ics_escape(desc)}",
             "BEGIN:VALARM", "TRIGGER:PT0S", "ACTION:DISPLAY",
             "DESCRIPTION:リマインド", "END:VALARM",
             "END:VEVENT",
