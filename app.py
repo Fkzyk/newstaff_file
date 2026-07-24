@@ -371,17 +371,21 @@ with tab_docs:
             bar.progress((i + 1) / len(selected))
         status.empty()
         # 2. 全員分の入社案内Gmailをまとめて開く(添付だけは各自ドラッグ)
-        opened = 0
+        #    PDF(添付)が1つも無い人はメールを開かない(添付漏れ送信の防止)
+        opened, mail_skipped = 0, []
         for p, folder, notes in results:
             try:
                 subject, body, atts = build_mail_content(
                     folder, p, company, subject_tpl, body_tpl, shataku_text)
+                if not atts:
+                    mail_skipped.append(p.name)
+                    continue
                 webbrowser.open(gmail_compose_url(
                     p.email, subject, body, cc=defaults.ANNAI_CC,
                     account=gmail_account))
                 opened += 1
             except Exception:
-                pass
+                mail_skipped.append(p.name)
         # 3. ジョブカン下書きを用意(これから入社する方の入社日ごと)
         from generator.pipeline import (generate_jobkan_mails,
                                         jobkan_calendar_events, gcal_event_url)
@@ -410,8 +414,14 @@ with tab_docs:
             open_folder(out_dir)
             st.success(f"✅ 完了しました。書類 {len(results)}名分 / 入社案内Gmail {opened}件 / "
                        f"ジョブカン下書き {len(jobkan_dates)}件 / カレンダー予定 {cal_opened}件を開きました。")
+            if mail_skipped:
+                st.error("⚠️ PDFが作成できず、入社案内メールを開かなかった方: "
+                         + "、".join(mail_skipped)
+                         + "。Microsoft Officeを閉じてアプリを再起動し、"
+                         "「作った書類を直したいとき」でPDFを作ってから送ってください"
+                         "(添付漏れ防止のため保留しました)。")
             with st.container(border=True):
-                st.markdown("**残りの手作業(ここだけ手動)**")
+                st.markdown(f"**残りの手作業(送信元: {gmail_account})**")
                 st.markdown(
                     "1. 開いた各**入社案内Gmail**に、フォルダから本文「■添付書類」のPDFを"
                     "ドラッグ&ドロップ → 送信\n"
@@ -460,16 +470,24 @@ with tab_mail:
     if mailable:
         if st.button(f"📧 {len(mailable)}名分のGmailをまとめて開く",
                      type="primary", width="stretch"):
+            opened, skipped = 0, []
             for p in mailable:
                 folder = person_dir(out_dir, p)
-                subject, body, _a = build_mail_content(
+                subject, body, atts = build_mail_content(
                     folder, p, company, subject_tpl, body_tpl, shataku_text)
+                if not atts:
+                    skipped.append(p.name)
+                    continue
                 webbrowser.open(gmail_compose_url(p.email, subject, body,
                                                   cc=defaults.ANNAI_CC,
                                                   account=gmail_account))
+                opened += 1
             open_folder(out_dir)
-            st.success(f"Gmailを{len(mailable)}件開きました。保存先フォルダから"
+            st.success(f"Gmailを{opened}件開きました。保存先フォルダから"
                        "PDFをドラッグして添付し、送信してください。")
+            if skipped:
+                st.error("⚠️ PDFが無いためメールを開かなかった方: "
+                         + "、".join(skipped) + "(先にPDFを作成してください)")
         st.caption("個別に開き直したいときは下のボタンをどうぞ。")
     for p in mailable:
         with st.container(border=True):
@@ -484,12 +502,15 @@ with tab_mail:
                 folder = person_dir(out_dir, p)
                 subject, body, attachments = build_mail_content(
                     folder, p, company, subject_tpl, body_tpl, shataku_text)
-                webbrowser.open(gmail_compose_url(p.email, subject, body,
-                                                  cc=defaults.ANNAI_CC,
-                                                  account=gmail_account))
-                open_folder(folder)
-                c2.success("Gmailとフォルダを開きました。")
-                c2.caption("添付: " + "、".join(a.name for a in attachments))
+                if not attachments:
+                    c2.error("PDFがまだありません。先にPDFを作成してください。")
+                else:
+                    webbrowser.open(gmail_compose_url(p.email, subject, body,
+                                                      cc=defaults.ANNAI_CC,
+                                                      account=gmail_account))
+                    open_folder(folder)
+                    c2.success("Gmailとフォルダを開きました。")
+                    c2.caption("添付: " + "、".join(a.name for a in attachments))
 
 # =========================================================== ③ ジョブカン
 with tab_jobkan:
