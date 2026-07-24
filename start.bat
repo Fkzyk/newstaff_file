@@ -43,6 +43,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0make_shortcut.ps1" >nu
 
 echo Checking libraries (first run may take 1-2 minutes)...
 %PY% -m pip install -q -r requirements.txt
+rem Register pywin32 COM support so Word/Excel PDF conversion works
+%PY% -m pywin32_postinstall -install -silent >nul 2>nul
 if errorlevel 1 (
   echo.
   echo [ERROR] Failed to install libraries.

@@ -336,13 +336,17 @@ with tab_docs:
         cohorts[key] = base
 
     st.divider()
-    st.markdown("#### これ1つで全部")
-    st.caption("ボタンを押すと ①全員の書類を作成 → ②全員分のGmail作成画面(宛先・CC・件名・"
-               "本文入り)をまとめて開く → ③保存先フォルダを開く まで一気に行います。"
-               "残りは各Gmailに本文記載のPDFをドラッグして送信するだけです。")
-    run = st.button(f"🚀 {len(selected)}名分を作成してGmailをまとめて開く",
+    st.markdown("#### 🚀 これ1つで全部")
+    st.caption("押すと、選んだ全員について次を一気に実行します:")
+    st.markdown(
+        "1. 書類を作成(入社のご案内・雇用契約書・**入社辞令**・転居者は社宅一式)\n"
+        "2. **入社案内メール**のGmail作成画面を全員分まとめて開く\n"
+        "3. **ジョブカン案内メール**の下書き(PDF添付入り)を用意\n"
+        "4. **ジョブカンの送信予定をGoogleカレンダーに登録**(忘れ防止)\n"
+        "5. 保存先フォルダを開く")
+    run = st.button(f"🚀 {len(selected)}名分をまとめて実行する",
                     type="primary", disabled=not selected, width="stretch")
-    st.caption(f"保存先: {out_dir}")
+    st.caption(f"保存先: {out_dir} / 送信元: {gmail_account}")
 
     if run:
         save_settings(out_dir, {
@@ -366,7 +370,7 @@ with tab_docs:
                 errors.append((p, str(e)))
             bar.progress((i + 1) / len(selected))
         status.empty()
-        # 全員分のGmail作成画面をまとめて開く(添付だけは各自ドラッグ)
+        # 2. 全員分の入社案内Gmailをまとめて開く(添付だけは各自ドラッグ)
         opened = 0
         for p, folder, notes in results:
             try:
@@ -378,12 +382,41 @@ with tab_docs:
                 opened += 1
             except Exception:
                 pass
+        # 3. ジョブカン下書きを用意(これから入社する方の入社日ごと)
+        from generator.pipeline import (generate_jobkan_mails,
+                                        jobkan_calendar_events, gcal_event_url)
+        jobkan_dates = sorted({p.nyusha_date for p in people
+                               if p.nyusha_date and p.nyusha_date >= today and p.email})
+        for d in jobkan_dates:
+            try:
+                generate_jobkan_mails(people, out_dir, d)
+            except Exception:
+                pass
+        # 4. ジョブカンの送信予定をGoogleカレンダーに登録(忘れ防止)+ .ics保存
+        cal_events = jobkan_calendar_events(people)
+        cal_opened = 0
+        for day, title, detail in cal_events[:8]:
+            try:
+                webbrowser.open(gcal_event_url(title, day, detail, account=gmail_account))
+                cal_opened += 1
+            except Exception:
+                pass
+        try:
+            build_jobkan_reminders(people, out_dir)  # .icsも保存(バックアップ)
+        except Exception:
+            pass
+        # 5. フォルダを開く
         if results:
             open_folder(out_dir)
-            st.success(f"✅ {len(results)}名分を作成し、Gmailを{opened}件開きました。")
-            st.info("次にやること: 開いた各Gmailに、保存先フォルダから本文の"
-                    "「■添付書類」のPDFをドラッグ&ドロップ → 送信(または送信予約)。"
-                    "添付と送信ボタンだけは仕様上どうしても手動です。")
+            st.success(f"✅ 完了しました。書類 {len(results)}名分 / 入社案内Gmail {opened}件 / "
+                       f"ジョブカン下書き {len(jobkan_dates)}件 / カレンダー予定 {cal_opened}件を開きました。")
+            with st.container(border=True):
+                st.markdown("**残りの手作業(ここだけ手動)**")
+                st.markdown(
+                    "1. 開いた各**入社案内Gmail**に、フォルダから本文「■添付書類」のPDFを"
+                    "ドラッグ&ドロップ → 送信\n"
+                    "2. 開いた各**Googleカレンダー**の予定を「保存」(ジョブカン送信日の通知)\n"
+                    "3. ジョブカン案内メールは**その予定日になったら**「③ジョブカン案内メール」タブから送信")
             for p, folder, notes in results:
                 st.write(f"- **{p.name}**{'(社宅案内あり)' if p.shataku else ''} "
                          f"→ `{folder.name}`")

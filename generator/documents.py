@@ -146,26 +146,41 @@ def copy_shataku_files(out_dir: Path,
 
 
 # ---------------------------------------------------------------- PDF変換
+# 直近のOffice変換エラー(診断表示用)
+LAST_OFFICE_ERROR = ""
+
+
 def _convert_with_ms_office(path: Path, out_pdf: Path) -> bool:
-    """Windows + Microsoft Office がある場合はOfficeで変換する(再現度最優先)。"""
+    """Windows + Microsoft Office がある場合はOfficeで変換する(再現度最優先)。
+
+    Streamlitはワーカースレッドで動くため、Office(COM)を使う前に必ず
+    このスレッドでCOMを初期化する(CoInitialize)必要がある。これを怠ると
+    Officeが入っていても DispatchEx が失敗する。
+    """
+    global LAST_OFFICE_ERROR
     if platform.system() != "Windows":
         return False
     try:
+        import pythoncom  # type: ignore
         import win32com.client  # type: ignore
-    except ImportError:
+    except ImportError as e:
+        LAST_OFFICE_ERROR = f"pywin32が未導入: {e}"
         return False
+
     suffix = path.suffix.lower()
+    pythoncom.CoInitialize()
     try:
         if suffix in (".docx", ".doc"):
             app = win32com.client.DispatchEx("Word.Application")
             app.Visible = False
+            app.DisplayAlerts = False
             try:
                 doc = app.Documents.Open(str(path), ReadOnly=True)
                 doc.ExportAsFixedFormat(str(out_pdf), 17)  # wdExportFormatPDF
                 doc.Close(False)
             finally:
                 app.Quit()
-            return True
+            return out_pdf.exists()
         if suffix in (".xlsx", ".xls"):
             app = win32com.client.DispatchEx("Excel.Application")
             app.Visible = False
@@ -176,9 +191,12 @@ def _convert_with_ms_office(path: Path, out_pdf: Path) -> bool:
                 wb.Close(False)
             finally:
                 app.Quit()
-            return True
-    except Exception:
+            return out_pdf.exists()
+    except Exception as e:
+        LAST_OFFICE_ERROR = f"{type(e).__name__}: {e}"
         return False
+    finally:
+        pythoncom.CoUninitialize()
     return False
 
 
