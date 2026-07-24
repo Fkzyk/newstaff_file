@@ -51,6 +51,16 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Starting the app... A browser window will open.
+rem Register pywin32 COM support so Word/Excel PDF conversion works.
+rem This is optional; ignore its exit code so it never blocks startup.
+%PY% -m pywin32_postinstall -install -silent >nul 2>nul
+cd /d "%~dp0"
+
+echo.
+echo Starting the app... A browser window will open shortly.
+echo (Keep this black window open while using the app. Do NOT press any key here.)
+echo.
 %PY% -m streamlit run app.py --server.headless false
+echo.
+echo The app has stopped. You can close this window.
 pause

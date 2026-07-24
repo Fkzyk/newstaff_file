@@ -93,8 +93,11 @@ def ensure_pdfs_fresh(folder: Path, progress=None) -> list[str]:
         if not pdf.exists() or pdf.stat().st_mtime + 1 < f.stat().st_mtime:
             if progress:
                 progress(f"{f.name} をPDFに変換中…")
-            if documents.convert_to_pdf(f, word_only=(f.suffix == ".doc")):
-                refreshed.append(f.name)
+            try:
+                if documents.convert_to_pdf(f, word_only=(f.suffix == ".doc")):
+                    refreshed.append(f.name)
+            except Exception:
+                pass  # PDF変換できなくてもメール作成は続行(元ファイルは残る)
     return refreshed
 
 
@@ -156,6 +159,42 @@ def gmail_compose_url(to: str, subject: str, body: str,
     return "https://mail.google.com/mail/?" + urlencode(params)
 
 
+def gcal_event_url(title: str, day, details: str = "",
+                   account: str | None = None) -> str:
+    """Googleカレンダーの終日予定を1クリックで保存できる作成画面URL。"""
+    from urllib.parse import urlencode
+    end = day + dt.timedelta(days=1)
+    params = {
+        "action": "TEMPLATE", "text": title,
+        "dates": f"{day:%Y%m%d}/{end:%Y%m%d}", "details": details,
+    }
+    if account:
+        params["authuser"] = account
+    return "https://calendar.google.com/calendar/render?" + urlencode(params)
+
+
+def jobkan_calendar_events(people: list[Person]):
+    """今後のジョブカン送信予定を(日付, タイトル, 説明)で返す(近い順)。"""
+    today = dt.date.today()
+    evs, seen = [], set()
+    for p in people:
+        if not p.nyusha_date or not p.email or p.nyusha_date in seen:
+            continue
+        seen.add(p.nyusha_date)
+        ann = defaults.jobkan_announce_date(p.nyusha_date)
+        auto = defaults.jobkan_auto_date(p.nyusha_date)
+        md = defaults.fmt_md(p.nyusha_date)
+        if ann >= today:
+            evs.append((ann, f"【送信】ジョブカン事前案内メール（{md}入社）",
+                        f"{md}入社の方へジョブカン事前案内メールを送る日。"
+                        "入社書類作成アプリの③タブから送信。"))
+        if auto >= today:
+            evs.append((auto, f"【送信】ジョブカン登録日リマインドメール（{md}入社）",
+                        f"{md}入社の方へ登録日リマインドメールを送る日。"))
+    evs.sort()
+    return evs
+
+
 def generate_person(person: Person, base_dir: Path, cohort: dict, company: dict,
                     subject_tpl: str, body_tpl: str,
                     hakko_date: dt.date | None = None,
@@ -180,26 +219,31 @@ def generate_person(person: Person, base_dir: Path, cohort: dict, company: dict,
         name_disp = person.name.replace(" ", "").replace("　", "")
         return f"{sakusei:%Y%m%d}_{title}({name_disp}様).{ext}"
 
+    # PDF変換は失敗しても止めない(元のWord/Excelは必ず残す)
+    pdf_failed = []
+
+    def to_pdf(f, word_only=False):
+        report(f"{f.name} をPDFに変換中…")
+        try:
+            if documents.convert_to_pdf(f, word_only=word_only) is None:
+                pdf_failed.append(f.name)
+        except Exception:
+            pdf_failed.append(f.name)
+
     report("入社のご案内を作成中…")
     annai = documents.render_annai(person, cohort, hakko_date,
                                    folder / fname("入社のご案内", "docx"))
     report("雇用契約書を作成中…")
     keiyaku = documents.render_keiyakusho(person, folder / fname("雇用契約書", "xlsx"))
-
-    for f in (annai, keiyaku):
-        report(f"{f.name} をPDFに変換中…")
-        documents.convert_to_pdf(f)
+    to_pdf(annai)
+    to_pdf(keiyaku)
 
     # 辞令は原本.docの等長置換で生成。PDF化はWord限定
     # (LibreOfficeでは飾り枠・テキストボックスが崩れるため)
     report("入社辞令を作成中…")
     try:
         jirei_doc = jirei.render_jirei_doc(person, folder, sakusei)
-        report(f"{jirei_doc.name} をPDFに変換中…")
-        if documents.convert_to_pdf(jirei_doc, word_only=True) is None:
-            notes.append(
-                f"辞令のPDF化にはWordが必要です。「{jirei_doc.name}」をWordで開いて"
-                "「PDFとして保存」し、修正反映ボタンでメールを作り直してください。")
+        to_pdf(jirei_doc, word_only=True)
     except jirei.JireiError as e:
         notes.append(f"入社辞令だけ自動作成できませんでした(他の書類は作成済み): {e}")
 
@@ -209,8 +253,15 @@ def generate_person(person: Person, base_dir: Path, cohort: dict, company: dict,
             folder,
             annai_name=fname("社宅利用申込のご案内", "docx"),
             manual_name=fname("社宅システム入力マニュアル", "pdf"))
-        report("社宅案内をPDFに変換中…")
-        documents.convert_to_pdf(shataku_annai)
+        to_pdf(shataku_annai)
+
+    if pdf_failed:
+        hint = documents.LAST_OFFICE_ERROR or ""
+        notes.append(
+            "PDFに変換できなかった書類があります(" + "、".join(pdf_failed) + ")。"
+            "Word/Excelファイルは作成済みです。Microsoft Officeを一度終了してから"
+            "アプリを再起動し、「作った書類を直したいとき」で作り直すとPDFが作られます。"
+            + (f" [詳細: {hint}]" if hint else ""))
 
     report("メール下書きを作成中…")
     rebuild_mail(folder, person, company, subject_tpl, body_tpl, shataku_text)
@@ -244,6 +295,12 @@ def check_grades(people: list[Person]) -> tuple[bool, list[str]]:
 
 
 JOBKAN_MANUAL = documents.TEMPLATES / "jobkan_workflow.pdf"
+
+
+def _ics_escape(text: str) -> str:
+    """iCalendar(.ics)のテキスト値をエスケープする。"""
+    return (text.replace("\\", "\\\\").replace(";", "\\;")
+            .replace(",", "\\,").replace("\n", "\\n"))
 
 
 def build_jobkan_reminders(people: list[Person], out_dir: Path) -> tuple[Path, list[str]]:
@@ -290,8 +347,8 @@ def build_jobkan_reminders(people: list[Person], out_dir: Path) -> tuple[Path, l
             f"UID:jobkan-{d:%Y%m%d}-{i}@nyusha-app",
             f"DTSTART;VALUE=DATE:{d:%Y%m%d}",
             f"DTEND;VALUE=DATE:{end:%Y%m%d}",
-            f"SUMMARY:{summary}",
-            f"DESCRIPTION:{desc}",
+            f"SUMMARY:{_ics_escape(summary)}",
+            f"DESCRIPTION:{_ics_escape(desc)}",
             "BEGIN:VALARM", "TRIGGER:PT0S", "ACTION:DISPLAY",
             "DESCRIPTION:リマインド", "END:VALARM",
             "END:VEVENT",
