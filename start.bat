@@ -43,8 +43,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0make_shortcut.ps1" >nu
 
 echo Checking libraries (first run may take 1-2 minutes)...
 %PY% -m pip install -q -r requirements.txt
-rem Register pywin32 COM support so Word/Excel PDF conversion works
-%PY% -m pywin32_postinstall -install -silent >nul 2>nul
 if errorlevel 1 (
   echo.
   echo [ERROR] Failed to install libraries.
@@ -53,6 +51,16 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Starting the app... A browser window will open.
+rem Register pywin32 COM support so Word/Excel PDF conversion works.
+rem This is optional; ignore its exit code so it never blocks startup.
+%PY% -m pywin32_postinstall -install -silent >nul 2>nul
+cd /d "%~dp0"
+
+echo.
+echo Starting the app... A browser window will open shortly.
+echo (Keep this black window open while using the app. Do NOT press any key here.)
+echo.
 %PY% -m streamlit run app.py --server.headless false
+echo.
+echo The app has stopped. You can close this window.
 pause
